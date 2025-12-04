@@ -1,13 +1,14 @@
+#![allow(non_upper_case_globals)]
 use crate::component::Component;
-use crate::entity::Entity;
 use crate::ecs::Ecs;
-use crate::scheduler::Scheduler;
+use crate::entity::Entity;
 use crate::frame::Frame;
+use crate::scheduler::Scheduler;
 use crate::storage::{Storage, StorageLike};
 use crate::tick::Tick;
 use std::ptr::NonNull;
 
-decs_macros::system_group!(InitializationGroup {  });
+decs_macros::system_group!(InitializationGroup {});
 decs_macros::system_group!(SimulationGroup { After=[InitializationGroup] });
 decs_macros::system_group!(CleanupGroup { After=[SimulationGroup] });
 decs_macros::system_group!(DestroyGroup { After=[CleanupGroup] });
@@ -76,22 +77,20 @@ impl World {
         assert!(id < 256, "Component ID must be less than 256");
         let index = id as usize;
 
-        unsafe {
-            let seg = (id / 64) as usize;
-            let bit = id % 64;
-            let present = (self.storage_mask[seg] >> bit) & 1 != 0;
+        let seg = (id / 64) as usize;
+        let bit = id % 64;
+        let present = (self.storage_mask[seg] >> bit) & 1 != 0;
 
-            if !present || self.storage_ptrs[index].is_none() {
-                let storage_box: Box<Storage<T>> = Box::new(Storage::<T>::new());
-                self.storage_mask[seg] |= 1u64 << bit;
-                let raw_typed: *mut Storage<T> = Box::into_raw(storage_box);
-                let raw_trait: *mut dyn StorageLike = raw_typed;
-                let nn = NonNull::new(raw_trait).expect("Box::into_raw should not yield null");
-                self.storage_ptrs[index] = Some(nn);
-                self.typed_ptrs[index] = raw_typed as *mut ();
-            }
-            self.typed_ptrs[index] as *mut Storage<T>
+        if !present || self.storage_ptrs[index].is_none() {
+            let storage_box: Box<Storage<T>> = Box::default();
+            self.storage_mask[seg] |= 1u64 << bit;
+            let raw_typed: *mut Storage<T> = Box::into_raw(storage_box);
+            let raw_trait: *mut dyn StorageLike = raw_typed;
+            let nn = NonNull::new(raw_trait).expect("Box::into_raw should not yield null");
+            self.storage_ptrs[index] = Some(nn);
+            self.typed_ptrs[index] = raw_typed as *mut ();
         }
+        self.typed_ptrs[index] as *mut Storage<T>
     }
 
     /// Returns a mutable reference to the storage for component type T.
@@ -126,7 +125,7 @@ impl World {
                 remaining_mask &= !((1u64 << run_len) - 1) << start;
             }
         }
-        
+
         true
     }
 
@@ -135,13 +134,14 @@ impl World {
     pub fn get_storage_ptr<T: Component>(&self) -> *mut Storage<T> {
         let id = T::id();
         assert!(id < 256, "Component ID must be less than 256");
-        unsafe {
-            let seg = (id / 64) as usize;
-            let bit = id % 64;
-            let present = (self.storage_mask[seg] >> bit) & 1 != 0;
-            assert!(present, "Storage for component must exist before get_storage_ptr");
-            self.typed_ptrs[id as usize] as *mut Storage<T>
-        }
+        let seg = (id / 64) as usize;
+        let bit = id % 64;
+        let present = (self.storage_mask[seg] >> bit) & 1 != 0;
+        assert!(
+            present,
+            "Storage for component must exist before get_storage_ptr"
+        );
+        self.typed_ptrs[id as usize] as *mut Storage<T>
     }
 }
 

@@ -1,10 +1,12 @@
-use decs::storage::Storage;
-use decs_macros::Component;
-use decs::tick::Tick;
 use decs::frame::Frame;
+use decs::storage::Storage;
+use decs::tick::Tick;
+use decs_macros::Component;
 
 #[derive(Clone, Copy, Component)]
-struct TestComponent { value: i32 }
+struct TestComponent {
+    value: i32,
+}
 
 #[test]
 fn test_set_created_then_modified_same_tick() {

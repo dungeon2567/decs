@@ -1,16 +1,17 @@
 #![feature(allocator_api)]
+#![allow(non_upper_case_globals)]
 
 extern crate self as decs;
 
 pub mod component;
-pub mod entity;
 pub mod ecs;
-pub mod rollback;
+pub mod entity;
+pub mod frame;
 pub mod pool;
+pub mod rollback;
 pub mod scheduler;
 pub mod storage;
 pub mod system;
-pub mod frame;
 pub mod tick;
 pub mod view;
 pub mod world;

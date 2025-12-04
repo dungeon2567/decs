@@ -7,7 +7,7 @@ use syn::DeriveInput;
 use quote::format_ident;
 
 /// Input structure for the system! macro
-/// 
+///
 /// Example:
 /// ```ignore
 /// system!(SystemName {
@@ -28,13 +28,13 @@ struct SystemInput {
 impl Parse for SystemInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let system_name: Ident = input.parse()?;
-        
+
         let content;
-        let brace = syn::braced!(content in input);
-        
+        let _brace = syn::braced!(content in input);
+
         // Skip "query" keyword
         let _query: Ident = content.parse()?;
-        
+
         let query_fn: ItemFn = content.parse()?;
 
         let mut none_types = Vec::new();
@@ -77,7 +77,7 @@ impl Parse for SystemInput {
 
         Ok(SystemInput {
             system_name,
-            _brace: brace,
+            _brace: _brace,
             query_fn,
             none_types,
             all_types,
@@ -90,7 +90,7 @@ impl Parse for SystemInput {
 /// Handles both View<T>, ViewMut<T>, and &mut ViewMut<T> patterns
 fn extract_view_params(query_fn: &ItemFn) -> Vec<(Ident, Type, bool)> {
     let mut params = Vec::new();
-    
+
     for arg in &query_fn.sig.inputs {
         if let FnArg::Typed(pat_type) = arg {
             if let Pat::Ident(pat_ident) = &*pat_type.pat {
@@ -100,13 +100,13 @@ fn extract_view_params(query_fn: &ItemFn) -> Vec<(Ident, Type, bool)> {
                 } else {
                     &*pat_type.ty
                 };
-                
+
                 if let Type::Path(type_path) = inner_type {
                     let last_segment = &type_path.path.segments.last().unwrap();
                     let type_name = &last_segment.ident;
-                    
+
                     let is_mut = type_name == "ViewMut";
-                    
+
                     if type_name == "View" || is_mut {
                         if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
                             if let Some(syn::GenericArgument::Type(component_type)) = args.args.first() {
@@ -118,29 +118,29 @@ fn extract_view_params(query_fn: &ItemFn) -> Vec<(Ident, Type, bool)> {
             }
         }
     }
-    
+
     params
 }
 
 #[proc_macro]
 pub fn system(input: TokenStream) -> TokenStream {
     let SystemInput { system_name, query_fn, none_types, all_types, changed_types, .. } = parse_macro_input!(input as SystemInput);
-    
+
     let params = extract_view_params(&query_fn);
-    
+
     if params.is_empty() {
         return syn::Error::new_spanned(
             &query_fn.sig,
-            "Query function must have at least one View<T> or ViewMut<T> parameter"
+            "Query function must have at least one View<T> or ViewMut<T> parameter",
         )
-        .to_compile_error()
-        .into();
+            .to_compile_error()
+            .into();
     }
-    
+
     let query_fn_name = &query_fn.sig.ident;
     let query_fn_body = &query_fn.block;
     let query_params = &query_fn.sig.inputs;
-    
+
     // Build required types from params + All + Changed; negative-only from None
     let mut required_index: HashMap<String, usize> = HashMap::new();
     let mut required_types: Vec<(Type, bool)> = Vec::new(); // (Type, is_mut)
@@ -202,7 +202,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         .iter()
         .map(|idx| Ident::new(&format!("chunk_{}", idx), system_name.span()))
         .collect();
-    
+
     let mut read_keys: HashMap<String, bool> = HashMap::new();
     let mut read_types: Vec<proc_macro2::TokenStream> = Vec::new();
     for (_, ty, is_mut) in &params {
@@ -225,17 +225,17 @@ pub fn system(input: TokenStream) -> TokenStream {
             read_types.push(quote! { std::any::TypeId::of::<#ty>() });
         }
     }
-    
+
     let write_types: Vec<_> = params.iter()
         .filter(|(_, _, is_mut)| *is_mut)
         .map(|(_, ty, _)| quote! { std::any::TypeId::of::<#ty>() })
         .collect();
-    
+
     let struct_fields = storage_fields.iter().map(|(field_name, ty, mutability, _)| {
         quote! { pub #field_name: *#mutability decs::storage::Storage<#ty> }
     });
     let debug_struct_fields = quote! {};
-    
+
     let new_storage_init = storage_fields.iter().map(|(field_name, ty, _, is_mut)| {
         if *is_mut {
             quote! {
@@ -256,7 +256,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         quote! { #field_name }
     });
     let new_debug_init = quote! {};
-    
+
     // Generate mask intersection iteration
     let first_storage = &storage_fields[0].0;
     let mask_intersection = if required_count <= 1 {
@@ -278,7 +278,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         });
         quote! { 0u64 #(| #ors)* }
     };
-    
+
     // Prepare parameter gathering using precomputed chunk references
     let param_gathering: Vec<_> = params.iter().enumerate().map(|(i, (param_name, _ty, is_mut))| {
         let chunk_var = &param_chunk_idents[i];
@@ -303,11 +303,11 @@ pub fn system(input: TokenStream) -> TokenStream {
             }
         }
     }).collect();
-    
+
     let call_args: Vec<_> = params.iter().map(|(name, _, is_mut)| {
         if *is_mut { quote! { &mut #name } } else { quote! { #name } }
     }).collect();
-    
+
     // Generate intersection operations across all storages at page and chunk levels,
     // and precompute page/chunk references for each storage
     let page_refs_init: Vec<_> = (0..required_count).map(|i| {
@@ -420,7 +420,6 @@ pub fn system(input: TokenStream) -> TokenStream {
         .collect();
 
 
-
     // Generate storage refresh sequences
 
     let expanded = quote! {
@@ -527,7 +526,7 @@ pub fn system(input: TokenStream) -> TokenStream {
             fn debug_counts(&self) -> (usize, usize) { (0, 0) }
         }
     };
-    
+
     TokenStream::from(expanded)
 }
 
@@ -644,7 +643,7 @@ impl Parse for SystemGroupInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let group_name: Ident = input.parse()?;
         let content;
-        let brace = syn::braced!(content in input);
+        let _brace = syn::braced!(content in input);
         let mut before_types = Vec::new();
         let mut after_types = Vec::new();
         let mut parent_type: Option<Type> = None;

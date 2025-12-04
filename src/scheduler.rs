@@ -1,5 +1,5 @@
-use crate::system::System;
 use crate::frame::Frame;
+use crate::system::System;
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
 
@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 /// Supports hierarchical system groups similar to Unity DOTS ECS.
 pub struct Scheduler {
     systems: Vec<Box<dyn System>>,
-    wavefronts: Vec<Vec<usize>>, 
+    wavefronts: Vec<Vec<usize>>,
 }
 
 impl Scheduler {
@@ -24,9 +24,6 @@ impl Scheduler {
         self.systems.push(Box::new(system));
         self.wavefronts.clear();
     }
-
-
-    
 
     /// Runs all systems using precomputed wavefronts. Call `build_wavefronts` after
     /// adding systems or changing dependencies before invoking `run`.
@@ -46,9 +43,6 @@ impl Scheduler {
     pub fn wavefronts(&self) -> &[Vec<usize>] {
         &self.wavefronts
     }
-
-    
-
 
     fn compute_wavefronts(&self) -> Vec<Vec<usize>> {
         let n = self.systems.len();
@@ -89,16 +83,28 @@ impl Scheduler {
         let mut reads_by_type: HashMap<TypeId, Vec<usize>> = HashMap::new();
         let mut writes_by_type: HashMap<TypeId, Vec<usize>> = HashMap::new();
         for (i, system) in self.systems.iter().enumerate() {
-            for &t in system.reads() { reads_by_type.entry(t).or_default().push(i); }
-            for &t in system.writes() { writes_by_type.entry(t).or_default().push(i); }
+            for &t in system.reads() {
+                reads_by_type.entry(t).or_default().push(i);
+            }
+            for &t in system.writes() {
+                writes_by_type.entry(t).or_default().push(i);
+            }
         }
 
         for (t, writers) in writes_by_type.iter() {
             if let Some(readers) = reads_by_type.get(t) {
-                for &w in writers { for &r in readers { if w != r { graph.add_edge(w, r); } } }
+                for &w in writers {
+                    for &r in readers {
+                        if w != r {
+                            graph.add_edge(w, r);
+                        }
+                    }
+                }
             }
             if writers.len() > 1 {
-                for k in 0..writers.len() - 1 { graph.add_edge(writers[k], writers[k + 1]); }
+                for k in 0..writers.len() - 1 {
+                    graph.add_edge(writers[k], writers[k + 1]);
+                }
             }
         }
 
@@ -108,18 +114,26 @@ impl Scheduler {
                     for before_type in group.before() {
                         if let Some(bs) = index_by_type.get(before_type) {
                             for &k in bs {
-                                if i != k { graph.add_edge(i, k); }
+                                if i != k {
+                                    graph.add_edge(i, k);
+                                }
                             }
                         }
                     }
                     for after_type in group.after() {
                         if let Some(as_) = index_by_type.get(after_type) {
                             for &k in as_ {
-                                if i != k { graph.add_edge(k, i); }
+                                if i != k {
+                                    graph.add_edge(k, i);
+                                }
                             }
                         }
                     }
-                    if let Some(parent) = group.parent() { group = parent; } else { break; }
+                    if let Some(parent) = group.parent() {
+                        group = parent;
+                    } else {
+                        break;
+                    }
                 }
             }
         }
@@ -183,10 +197,25 @@ impl DependencyGraph {
         let mut levels: Vec<Vec<usize>> = Vec::new();
         let mut in_degree = self.in_degree.clone();
         let mut queue: VecDeque<usize> = VecDeque::new();
-        for i in 0..self.n { if in_degree[i] == 0 { queue.push_back(i); } }
+        for (i, deg) in in_degree.iter().enumerate() {
+            if *deg == 0 {
+                queue.push_back(i);
+            }
+        }
         let mut visited = 0usize;
         while visited < self.n {
-            if queue.is_empty() { let mut rem: Vec<usize> = Vec::new(); for i in 0..self.n { if in_degree[i] > 0 { rem.push(i); } } if !rem.is_empty() { levels.push(rem); } break; }
+            if queue.is_empty() {
+                let mut rem: Vec<usize> = Vec::new();
+                for (i, deg) in in_degree.iter().enumerate() {
+                    if *deg > 0 {
+                        rem.push(i);
+                    }
+                }
+                if !rem.is_empty() {
+                    levels.push(rem);
+                }
+                break;
+            }
             let round = queue.len();
             let mut level: Vec<usize> = Vec::with_capacity(round);
             for _ in 0..round {
@@ -194,11 +223,18 @@ impl DependencyGraph {
                     level.push(node);
                     visited += 1;
                     for &adj in &self.adjacency[node] {
-                        if in_degree[adj] > 0 { in_degree[adj] -= 1; if in_degree[adj] == 0 { queue.push_back(adj); } }
+                        if in_degree[adj] > 0 {
+                            in_degree[adj] -= 1;
+                            if in_degree[adj] == 0 {
+                                queue.push_back(adj);
+                            }
+                        }
                     }
                 }
             }
-            if !level.is_empty() { levels.push(level); }
+            if !level.is_empty() {
+                levels.push(level);
+            }
         }
         levels
     }

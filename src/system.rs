@@ -1,9 +1,9 @@
 use crate::component::{Component, Destroyed};
 use crate::storage::Storage;
 use crate::world::World;
+use decs::world::CleanupGroup;
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
-use decs::world::CleanupGroup;
 
 pub trait SystemGroup: Any + Send + Sync + 'static {
     fn name(&self) -> &'static str {
@@ -13,7 +13,6 @@ pub trait SystemGroup: Any + Send + Sync + 'static {
     fn instance() -> &'static dyn SystemGroup
     where
         Self: Sized;
-
 
     fn before(&self) -> &'static [TypeId] {
         &[]
@@ -204,14 +203,17 @@ impl<T: Component> ComponentCleanupSystem<T> {
 
                                     if chunk_mut.presence_mask == 0 {
                                         let _ = chunk_mut;
-                                        debug_assert!((page_mut.presence_mask >> page_idx) & 1 != 0);
+                                        debug_assert!(
+                                            (page_mut.presence_mask >> page_idx) & 1 != 0
+                                        );
                                         let t_storage = &mut *t_storage;
                                         if let Some((new_ptr, moved_idx)) =
                                             t_storage.chunk_pool.free_chunk(page_mut.data[page_idx])
                                         {
                                             page_mut.data[moved_idx as usize] = new_ptr;
                                         }
-                                        let dc = <T as crate::component::Component>::default_chunk();
+                                        let dc =
+                                            <T as crate::component::Component>::default_chunk();
                                         page_mut.data[page_idx] = dc as *const _ as *mut _;
                                         page_mut.presence_mask &= !(1u64 << page_idx);
                                         page_mut.fullness_mask &= !(1u64 << page_idx);
@@ -244,7 +246,6 @@ impl<T: Component> ComponentCleanupSystem<T> {
             );
         }
     }
-
 }
 
 impl<T: Component> System for ComponentCleanupSystem<T> {
@@ -266,7 +267,7 @@ impl<T: Component> System for ComponentCleanupSystem<T> {
     }
 
     fn parent(&self) -> Option<&dyn SystemGroup> {
-        Some( CleanupGroup::instance() )
+        Some(CleanupGroup::instance())
     }
 }
 
@@ -452,6 +453,6 @@ impl<T: Component, Group: SystemGroup> System for TemporaryComponentCleanupSyste
     }
 
     fn parent(&self) -> Option<&dyn SystemGroup> {
-        Some( Group::instance() )
+        Some(Group::instance())
     }
 }

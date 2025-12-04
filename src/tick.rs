@@ -1,9 +1,9 @@
+use std::cell::Cell;
 use std::fmt;
 use std::ops::{Add, Sub};
-use std::cell::Cell;
 
 thread_local! {
-    pub static CURRENT_TICK: Cell<Tick> = Cell::new(Tick(0));
+    pub static CURRENT_TICK: Cell<Tick> = const { Cell::new(Tick(0)) };
 }
 
 /// Absolute tick in modular 32-bit time.

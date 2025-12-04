@@ -1,10 +1,10 @@
-use decs_macros::Component;
+use decs::ecs::Ecs;
+use decs::frame::Frame;
 use decs::system;
 use decs::system::System;
 use decs::view::View;
 use decs::world::World;
-use decs::frame::Frame;
-use decs::ecs::Ecs;
+use decs_macros::Component;
 use std::sync::Once;
 fn register_components_once() {
     static INIT: Once = Once::new();
@@ -21,8 +21,6 @@ struct Position {
     y: f32,
 }
 
- 
-
 #[allow(dead_code)]
 #[derive(Clone, Copy, Component)]
 struct Velocity {
@@ -30,11 +28,7 @@ struct Velocity {
     y: f32,
 }
 
- 
-
 static mut COUNT_MATCHED: usize = 0;
-
- 
 
 system!(FilteredPosition {
     query fn update(_el: View<Velocity>) {
@@ -55,14 +49,30 @@ fn none_query_counts_velocity_without_position() {
         let vel = unsafe { &mut *vel_ptr };
 
         for i in 0..1000u32 {
-            vel.set(&frame, i, Velocity { x: i as f32, y: (i * 2) as f32 });
+            vel.set(
+                &frame,
+                i,
+                Velocity {
+                    x: i as f32,
+                    y: (i * 2) as f32,
+                },
+            );
         }
         for i in (0..1000u32).step_by(10) {
-            pos.set(&frame, i, Position { x: i as f32, y: (i * 3) as f32 });
+            pos.set(
+                &frame,
+                i,
+                Position {
+                    x: i as f32,
+                    y: (i * 3) as f32,
+                },
+            );
         }
     }
 
-    unsafe { COUNT_MATCHED = 0; }
+    unsafe {
+        COUNT_MATCHED = 0;
+    }
     let system = FilteredPosition::new(&mut world);
     let frame = Frame::new(world.current_tick());
     system.run(&frame);
@@ -70,4 +80,3 @@ fn none_query_counts_velocity_without_position() {
     let matched = unsafe { COUNT_MATCHED };
     assert_eq!(matched, 900);
 }
-

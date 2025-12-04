@@ -1,5 +1,5 @@
-use decs::system::TemporaryComponentCleanupSystem;
 use crate::world::World;
+use decs::system::TemporaryComponentCleanupSystem;
 
 pub trait Component
 where
@@ -11,7 +11,7 @@ where
 
     fn default_page() -> &'static crate::storage::Page<Self>;
     fn default_chunk() -> &'static crate::storage::Chunk<Self>;
-    
+
     fn schedule_cleanup_system(world: &mut World);
 }
 
@@ -25,8 +25,10 @@ static mut __DECS_COMPONENT_ID_Destroyed: u32 = u32::MAX;
 
 #[allow(non_snake_case)]
 mod __decs_component_defaults_Destroyed {
-    pub(super) static mut DEFAULT_PAGE: *const crate::storage::Page<crate::component::Destroyed> = std::ptr::null();
-    pub(super) static mut DEFAULT_CHUNK: *const crate::storage::Chunk<crate::component::Destroyed> = std::ptr::null();
+    pub(super) static mut DEFAULT_PAGE: *const crate::storage::Page<crate::component::Destroyed> =
+        std::ptr::null();
+    pub(super) static mut DEFAULT_CHUNK: *const crate::storage::Chunk<crate::component::Destroyed> =
+        std::ptr::null();
 }
 
 impl Destroyed {
@@ -35,9 +37,12 @@ impl Destroyed {
             if self::__decs_component_defaults_Destroyed::DEFAULT_PAGE.is_null()
                 || self::__decs_component_defaults_Destroyed::DEFAULT_CHUNK.is_null()
             {
-                let default_chunk_box = Box::new(crate::storage::Chunk::<crate::component::Destroyed>::new());
-                let default_chunk_ptr_mut: *mut crate::storage::Chunk<crate::component::Destroyed> = Box::leak(default_chunk_box);
-                let default_chunk_ptr: *const crate::storage::Chunk<crate::component::Destroyed> = default_chunk_ptr_mut as *const _;
+                let default_chunk_box =
+                    Box::new(crate::storage::Chunk::<crate::component::Destroyed>::new());
+                let default_chunk_ptr_mut: *mut crate::storage::Chunk<crate::component::Destroyed> =
+                    Box::leak(default_chunk_box);
+                let default_chunk_ptr: *const crate::storage::Chunk<crate::component::Destroyed> =
+                    default_chunk_ptr_mut as *const _;
                 let page_box = Box::new(crate::storage::Page::<crate::component::Destroyed> {
                     presence_mask: 0,
                     fullness_mask: 0,
@@ -49,7 +54,8 @@ impl Destroyed {
                     pool_page: std::ptr::null_mut(),
                     owner_index: 0,
                 });
-                self::__decs_component_defaults_Destroyed::DEFAULT_PAGE = Box::leak(page_box) as *const crate::storage::Page<crate::component::Destroyed>;
+                self::__decs_component_defaults_Destroyed::DEFAULT_PAGE =
+                    Box::leak(page_box) as *const crate::storage::Page<crate::component::Destroyed>;
                 self::__decs_component_defaults_Destroyed::DEFAULT_CHUNK = default_chunk_ptr;
             }
             &*self::__decs_component_defaults_Destroyed::DEFAULT_PAGE
@@ -60,9 +66,12 @@ impl Destroyed {
             if self::__decs_component_defaults_Destroyed::DEFAULT_CHUNK.is_null()
                 || self::__decs_component_defaults_Destroyed::DEFAULT_PAGE.is_null()
             {
-                let default_chunk_box = Box::new(crate::storage::Chunk::<crate::component::Destroyed>::new());
-                let default_chunk_ptr_mut: *mut crate::storage::Chunk<crate::component::Destroyed> = Box::leak(default_chunk_box);
-                let default_chunk_ptr: *const crate::storage::Chunk<crate::component::Destroyed> = default_chunk_ptr_mut as *const _;
+                let default_chunk_box =
+                    Box::new(crate::storage::Chunk::<crate::component::Destroyed>::new());
+                let default_chunk_ptr_mut: *mut crate::storage::Chunk<crate::component::Destroyed> =
+                    Box::leak(default_chunk_box);
+                let default_chunk_ptr: *const crate::storage::Chunk<crate::component::Destroyed> =
+                    default_chunk_ptr_mut as *const _;
                 let page_box = Box::new(crate::storage::Page::<crate::component::Destroyed> {
                     presence_mask: 0,
                     fullness_mask: 0,
@@ -74,7 +83,8 @@ impl Destroyed {
                     pool_page: std::ptr::null_mut(),
                     owner_index: 0,
                 });
-                self::__decs_component_defaults_Destroyed::DEFAULT_PAGE = Box::leak(page_box) as *const crate::storage::Page<crate::component::Destroyed>;
+                self::__decs_component_defaults_Destroyed::DEFAULT_PAGE =
+                    Box::leak(page_box) as *const crate::storage::Page<crate::component::Destroyed>;
                 self::__decs_component_defaults_Destroyed::DEFAULT_CHUNK = default_chunk_ptr;
             }
             &*self::__decs_component_defaults_Destroyed::DEFAULT_CHUNK
@@ -100,9 +110,12 @@ impl Component for Destroyed {
             if self::__decs_component_defaults_Destroyed::DEFAULT_CHUNK.is_null()
                 || self::__decs_component_defaults_Destroyed::DEFAULT_PAGE.is_null()
             {
-                let default_chunk_box = Box::new(crate::storage::Chunk::<crate::component::Destroyed>::new());
-                let default_chunk_ptr_mut: *mut crate::storage::Chunk<crate::component::Destroyed> = Box::leak(default_chunk_box);
-                let default_chunk_ptr: *const crate::storage::Chunk<crate::component::Destroyed> = default_chunk_ptr_mut as *const _;
+                let default_chunk_box =
+                    Box::new(crate::storage::Chunk::<crate::component::Destroyed>::new());
+                let default_chunk_ptr_mut: *mut crate::storage::Chunk<crate::component::Destroyed> =
+                    Box::leak(default_chunk_box);
+                let default_chunk_ptr: *const crate::storage::Chunk<crate::component::Destroyed> =
+                    default_chunk_ptr_mut as *const _;
                 let page_box = Box::new(crate::storage::Page::<crate::component::Destroyed> {
                     presence_mask: 0,
                     fullness_mask: 0,
@@ -114,14 +127,16 @@ impl Component for Destroyed {
                     pool_page: std::ptr::null_mut(),
                     owner_index: 0,
                 });
-                self::__decs_component_defaults_Destroyed::DEFAULT_PAGE = Box::leak(page_box) as *const crate::storage::Page<crate::component::Destroyed>;
+                self::__decs_component_defaults_Destroyed::DEFAULT_PAGE =
+                    Box::leak(page_box) as *const crate::storage::Page<crate::component::Destroyed>;
                 self::__decs_component_defaults_Destroyed::DEFAULT_CHUNK = default_chunk_ptr;
             }
         }
     }
 
     fn schedule_cleanup_system(world: &mut World) {
-        let sys = TemporaryComponentCleanupSystem::<Destroyed, crate::world::DestroyGroup>::new(&*world);
+        let sys =
+            TemporaryComponentCleanupSystem::<Destroyed, crate::world::DestroyGroup>::new(&*world);
         world.scheduler_mut().add_system(sys);
     }
 }

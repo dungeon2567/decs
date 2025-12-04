@@ -1,11 +1,11 @@
-use decs_macros::Component;
-use decs::world::World;
-use decs::tick::Tick;
-use decs::system::ComponentCleanupSystem;
-use decs::system::System;
 use decs::component::Destroyed;
 use decs::ecs::Ecs;
 use decs::frame::Frame;
+use decs::system::ComponentCleanupSystem;
+use decs::system::System;
+use decs::tick::Tick;
+use decs::world::World;
+use decs_macros::Component;
 use std::sync::Once;
 fn register_components_once() {
     static INIT: Once = Once::new();
@@ -17,8 +17,9 @@ fn register_components_once() {
 
 #[allow(dead_code)]
 #[derive(Clone, Component)]
-struct CompT { v: u32 }
- 
+struct CompT {
+    v: u32,
+}
 
 #[test]
 fn component_cleanup_removes_t_where_destroyed_and_clears_masks() {
@@ -28,13 +29,12 @@ fn component_cleanup_removes_t_where_destroyed_and_clears_masks() {
     let _ = world.get_storage::<Destroyed>();
 
     {
-        let mut frame = Frame::new(world.current_tick());
+        let frame = Frame::new(world.current_tick());
         let t_storage = unsafe { &mut *world.get_storage::<CompT>() };
         let d_storage = unsafe { &mut *world.get_storage::<Destroyed>() };
         t_storage.set(&frame, 0, CompT { v: 10 });
         t_storage.set(&frame, 1, CompT { v: 20 });
         d_storage.set(&frame, 0, Destroyed());
-        frame.current_tick = Tick(1);
     }
 
     {

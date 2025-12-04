@@ -1,20 +1,17 @@
-
 #[cfg(test)]
 mod tests {
+    use decs::ecs::Ecs;
+    use decs::view::ViewMut;
     use decs::world::World;
     use decs_macros::Component;
-    use decs::ecs::Ecs;
     use std::sync::Once;
-    use decs::view::ViewMut;
-     
+
+    use decs::frame::Frame;
     use decs::system;
     use decs::tick::Tick;
-    use decs::frame::Frame;
 
     #[derive(Clone, Debug, PartialEq, Component)]
     struct Comp(i32);
-
-    
 
     system!(TestSystem {
         query fn update(comp: &mut ViewMut<Comp>) {
@@ -27,7 +24,7 @@ mod tests {
         register_components_once();
         let mut world = World::new();
         let _ = world.get_storage::<Comp>();
-        
+
         let mut scheduler = decs::scheduler::Scheduler::new();
         scheduler.add_system(TestSystem::new(&mut world));
         scheduler.build_wavefronts();
@@ -37,7 +34,9 @@ mod tests {
         let entity = {
             let frame = Frame::new(world.current_tick());
             let entity_storage = unsafe { &mut *world.get_entity_storage() };
-            entity_storage.spawn(&frame).expect("Failed to spawn entity")
+            entity_storage
+                .spawn(&frame)
+                .expect("Failed to spawn entity")
         };
         {
             let comp_storage = unsafe { &mut *world.get_storage::<Comp>() };
@@ -77,7 +76,11 @@ mod tests {
         // Verify value is restored to 10
         {
             let comp_storage = unsafe { &*world.get_storage::<Comp>() };
-            assert_eq!(comp_storage.get(entity.index()), Some(&Comp(10)), "Value should be restored to 10 after rollback");
+            assert_eq!(
+                comp_storage.get(entity.index()),
+                Some(&Comp(10)),
+                "Value should be restored to 10 after rollback"
+            );
         }
     }
 
@@ -99,7 +102,9 @@ mod tests {
         let entity = {
             let frame = Frame::new(world.current_tick());
             let entity_storage = unsafe { &mut *world.get_entity_storage() };
-            entity_storage.spawn(&frame).expect("Failed to spawn entity")
+            entity_storage
+                .spawn(&frame)
+                .expect("Failed to spawn entity")
         };
         {
             let comp_storage = unsafe { &mut *world.get_storage::<Comp>() };
@@ -119,7 +124,11 @@ mod tests {
         }
         {
             let comp_storage = unsafe { &*world.get_storage::<Comp>() };
-            assert_eq!(comp_storage.get(entity.index()), None, "Comp should not exist after rollback to before creation");
+            assert_eq!(
+                comp_storage.get(entity.index()),
+                None,
+                "Comp should not exist after rollback to before creation"
+            );
         }
     }
     fn register_components_once() {

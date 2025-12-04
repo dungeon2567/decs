@@ -140,10 +140,10 @@ impl<T> RollbackStorage<T> {
         }
 
         // Navigate to chunk and check chunk-level mask (source of truth for specific item)
-        if let Some(page) = self.get_page(storage_idx) {
-            if let Some(chunk) = page.get(page_idx) {
-                return (chunk.created_mask >> chunk_idx) & 1 != 0;
-            }
+        if let Some(page) = self.get_page(storage_idx)
+            && let Some(chunk) = page.get(page_idx)
+        {
+            return (chunk.created_mask >> chunk_idx) & 1 != 0;
         }
 
         false
@@ -162,10 +162,10 @@ impl<T> RollbackStorage<T> {
         }
 
         // Navigate to chunk and check chunk-level mask (source of truth for specific item)
-        if let Some(page) = self.get_page(storage_idx) {
-            if let Some(chunk) = page.get(page_idx) {
-                return (chunk.changed_mask >> chunk_idx) & 1 != 0;
-            }
+        if let Some(page) = self.get_page(storage_idx)
+            && let Some(chunk) = page.get(page_idx)
+        {
+            return (chunk.changed_mask >> chunk_idx) & 1 != 0;
         }
 
         false

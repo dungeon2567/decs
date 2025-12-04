@@ -124,7 +124,9 @@ impl<'a, T: Component + Clone> DerefMut for ViewMut<'a, T> {
             } else {
                 // Store old value only once per tick if not already tracked
                 if !was_changed && !was_removed {
-                    let old_val = self.chunk.data[self.index as usize].assume_init_ref().clone();
+                    let old_val = self.chunk.data[self.index as usize]
+                        .assume_init_ref()
+                        .clone();
                     rb_chunk.data[self.index as usize].write(old_val);
                 }
                 rb_chunk.removed_mask &= !bit;

@@ -18,8 +18,6 @@ struct Position {
     y: f32,
 }
 
- 
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Component)]
 struct Velocity {
@@ -27,15 +25,11 @@ struct Velocity {
     y: f32,
 }
 
- 
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Component)]
 struct Health {
     value: i32,
 }
-
- 
 
 #[test]
 fn test_component_id() {

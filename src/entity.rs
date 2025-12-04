@@ -1,9 +1,5 @@
- 
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, decs_macros::Component)]
 pub struct Entity(u64);
-
- 
 
 impl Entity {
     const INDEX_BITS: u32 = 21;

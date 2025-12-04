@@ -1,6 +1,6 @@
 use decs::component::Component;
-use decs_macros::Component;
 use decs::ecs::Ecs;
+use decs_macros::Component;
 
 #[allow(dead_code)]
 #[derive(Component)]

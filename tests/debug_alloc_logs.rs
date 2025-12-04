@@ -6,19 +6,16 @@ fn register_components_once() {
         Ecs::register::<DebugComp>();
     });
 }
-use decs_macros::Component;
+use decs::frame::Frame;
 use decs::storage::Storage;
 use decs::tick::Tick;
-use decs::frame::Frame;
-
+use decs_macros::Component;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Component)]
 struct DebugComp {
     v: u32,
 }
-
- 
 
 #[test]
 fn debug_allocation_logs() {

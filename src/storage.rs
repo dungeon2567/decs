@@ -1,9 +1,9 @@
+use crate::component::Component;
 use crate::rollback::{RollbackStorage, VecQueue};
 use crate::tick::Tick;
-use crate::component::Component;
 use std::any::Any;
 use std::mem::MaybeUninit;
- 
+
 use crate::pool::{Pool, PoolPage};
 
 /// Trait for storage-like structures that can verify their invariants.
@@ -18,7 +18,6 @@ pub trait StorageLike: Any {
 
     /// Returns a mutable reference to the underlying Any trait object for downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
-
 }
 
 /// A hierarchical storage structure for efficiently storing and querying data.
@@ -79,11 +78,11 @@ impl<T: Component> Storage<T> {
         if self.rollback.tick() != ct {
             let new_current: Box<RollbackStorage<T>> =
                 if let Some(mut pooled) = self.rollback_pool.pop() {
-                pooled.reset_for_tick(ct);
-                pooled
-            } else {
-                Box::new(RollbackStorage::with_tick(ct))
-            };
+                    pooled.reset_for_tick(ct);
+                    pooled
+                } else {
+                    Box::new(RollbackStorage::with_tick(ct))
+                };
             let old = std::mem::replace(&mut self.rollback, new_current);
             let mut merged = std::mem::take(&mut self.prev);
             merged.push_back(old);
@@ -93,7 +92,6 @@ impl<T: Component> Storage<T> {
             }
         }
     }
-
 
     /// Gets a reference to a value at the given global index.
     /// Returns None if the value doesn't exist.
@@ -144,7 +142,11 @@ impl<T: Component> Storage<T> {
 
         if page_was_new {
             let chunk_pool_ptr = &mut self.chunk_pool as *mut _;
-            let _ = self.page_pool.alloc_page_to_slot(storage_idx as u8, &mut self.data[storage_idx as usize], chunk_pool_ptr);
+            let _ = self.page_pool.alloc_page_to_slot(
+                storage_idx as u8,
+                &mut self.data[storage_idx as usize],
+                chunk_pool_ptr,
+            );
             self.presence_mask |= 1u64 << storage_idx;
             self.changed_mask |= 1u64 << storage_idx;
 
@@ -161,7 +163,9 @@ impl<T: Component> Storage<T> {
             let chunk_was_new = (page.presence_mask >> page_idx) & 1 == 0;
 
             if chunk_was_new {
-                let _ = self.chunk_pool.alloc_chunk_to_slot(page_idx as u8, &mut page.data[page_idx as usize]);
+                let _ = self
+                    .chunk_pool
+                    .alloc_chunk_to_slot(page_idx as u8, &mut page.data[page_idx as usize]);
                 page.presence_mask |= 1u64 << page_idx;
                 page.changed_mask |= 1u64 << page_idx;
                 debug_assert!(
@@ -389,9 +393,7 @@ impl<T: Component> Storage<T> {
 
             (chunk_has_present, old_value)
         };
-        let was_created_in_rollback = if self.rollback.tick() != {
-            frame.current_tick
-        } {
+        let was_created_in_rollback = if self.rollback.tick() != { frame.current_tick } {
             false
         } else {
             let rollback_page = self.rollback.get_or_create_page(storage_idx);
@@ -529,11 +531,9 @@ impl<T: Component> Storage<T> {
         if !page_has_present {
             // Page is empty - drop it and reset pointer to default
             // Note: self.presence_mask and self.fullness_mask were already updated above
-            unsafe {
-                self.page_pool.free(self.data[storage_idx as usize]);
-                let dp = <T as Component>::default_page();
-                self.data[storage_idx as usize] = dp as *const Page<T> as *mut Page<T>;
-            }
+            self.page_pool.free(self.data[storage_idx as usize]);
+            let dp = <T as Component>::default_page();
+            self.data[storage_idx as usize] = dp as *const Page<T> as *mut Page<T>;
             debug_assert!(
                 self.fullness_mask & !self.presence_mask == 0,
                 "Storage fullness_mask invariant violated after dropping page"
@@ -589,7 +589,11 @@ impl<T: Component> Storage<T> {
             for s in storage_start..storage_start + storage_run_len {
                 if (self.presence_mask >> s) & 1 == 0 {
                     let chunk_pool_ptr = &mut self.chunk_pool as *mut _;
-                    let _ = self.page_pool.alloc_page_to_slot(s as u8, &mut self.data[s], chunk_pool_ptr);
+                    let _ = self.page_pool.alloc_page_to_slot(
+                        s as u8,
+                        &mut self.data[s],
+                        chunk_pool_ptr,
+                    );
                     self.presence_mask |= 1u64 << s;
                 }
                 let page = unsafe { &mut *self.data[s] };
@@ -608,7 +612,9 @@ impl<T: Component> Storage<T> {
 
                     for p in page_start..page_start + page_run_len {
                         if (page.presence_mask >> p) & 1 == 0 {
-                            let _ = self.chunk_pool.alloc_chunk_to_slot(p as u8, &mut page.data[p]);
+                            let _ = self
+                                .chunk_pool
+                                .alloc_chunk_to_slot(p as u8, &mut page.data[p]);
                             page.presence_mask |= 1u64 << p;
                         }
                         let is_zst = std::mem::size_of::<T>() == 0;
@@ -619,7 +625,8 @@ impl<T: Component> Storage<T> {
                             };
                             let mut new_presence = old_presence;
                             for item in chain.iter().take(chain_len) {
-                                if let Some(rb_page) = unsafe { item.assume_init() }.get_page(s as u32)
+                                if let Some(rb_page) =
+                                    unsafe { item.assume_init() }.get_page(s as u32)
                                     && let Some(rb_chunk) = rb_page.get(p as u32)
                                 {
                                     new_presence &= !rb_chunk.created_mask;
@@ -631,7 +638,9 @@ impl<T: Component> Storage<T> {
                                 let new_pop = new_presence.count_ones();
                                 if new_presence == 0 {
                                     unsafe {
-                                        if let Some((new_ptr, moved_idx)) = self.chunk_pool.free_chunk(page.data[p]) {
+                                        if let Some((new_ptr, moved_idx)) =
+                                            self.chunk_pool.free_chunk(page.data[p])
+                                        {
                                             page.data[moved_idx as usize] = new_ptr;
                                         }
                                         let dc = <T as Component>::default_chunk();
@@ -660,10 +669,12 @@ impl<T: Component> Storage<T> {
                             let mut processed_chunk = 0u64;
                             let mut pending_remove = 0u64;
                             for item in chain.iter().take(chain_len) {
-                                if let Some(rb_page) = unsafe { item.assume_init() }.get_page(s as u32)
+                                if let Some(rb_page) =
+                                    unsafe { item.assume_init() }.get_page(s as u32)
                                     && let Some(rb_chunk) = rb_page.get(p as u32)
                                 {
-                                    let to_restore = (rb_chunk.changed_mask | rb_chunk.removed_mask)
+                                    let to_restore = (rb_chunk.changed_mask
+                                        | rb_chunk.removed_mask)
                                         & !processed_chunk;
                                     let mut mask = to_restore;
                                     while mask != 0 {
@@ -678,7 +689,8 @@ impl<T: Component> Storage<T> {
                                                 page.count = page.count.saturating_add(1);
                                                 self.count = self.count.saturating_add(1);
                                             }
-                                            let old_ref = unsafe { rb_chunk.data[i].assume_init_ref() };
+                                            let old_ref =
+                                                unsafe { rb_chunk.data[i].assume_init_ref() };
                                             chunk.data[i].write(old_ref.clone());
                                             chunk.presence_mask |= bit;
                                             chunk.fullness_mask |= bit;
@@ -723,7 +735,9 @@ impl<T: Component> Storage<T> {
                             let chunk = unsafe { &mut *page.data[p] };
                             if chunk.presence_mask == 0 {
                                 unsafe {
-                                    if let Some((new_ptr, moved_idx)) = self.chunk_pool.free_chunk(page.data[p]) {
+                                    if let Some((new_ptr, moved_idx)) =
+                                        self.chunk_pool.free_chunk(page.data[p])
+                                    {
                                         page.data[moved_idx as usize] = new_ptr;
                                     }
                                     let dc = <T as Component>::default_chunk();
@@ -931,7 +945,6 @@ impl<T: Component> StorageLike for Storage<T> {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
-
 }
 
 impl<T: Component> Default for Storage<T> {
@@ -958,13 +971,13 @@ impl Storage<crate::entity::Entity> {
     /// Uses trailing_ones() to find how many consecutive 1s are at the start,
     /// which directly gives us the position of the first 0.
     #[inline(always)]
-fn first_0_index(mask: u64) -> Option<usize> {
-    if mask == u64::MAX {
-        None
-    } else {
-        Some(mask.trailing_ones() as usize)
+    fn first_0_index(mask: u64) -> Option<usize> {
+        if mask == u64::MAX {
+            None
+        } else {
+            Some(mask.trailing_ones() as usize)
+        }
     }
-}
 
     /// Spawns a new entity by finding the first free index.
     ///
@@ -991,7 +1004,11 @@ fn first_0_index(mask: u64) -> Option<usize> {
                 unsafe { &mut *self.data[storage_idx] }
             } else {
                 let chunk_pool_ptr = &mut self.chunk_pool as *mut _;
-                let _ = self.page_pool.alloc_page_to_slot(storage_idx as u8, &mut self.data[storage_idx], chunk_pool_ptr);
+                let _ = self.page_pool.alloc_page_to_slot(
+                    storage_idx as u8,
+                    &mut self.data[storage_idx],
+                    chunk_pool_ptr,
+                );
                 self.presence_mask |= 1u64 << storage_idx;
                 self.changed_mask |= 1u64 << storage_idx;
                 debug_assert!(
@@ -1008,7 +1025,9 @@ fn first_0_index(mask: u64) -> Option<usize> {
             let chunk = if (page.presence_mask >> page_idx) & 1 != 0 {
                 unsafe { &mut *page.data[page_idx] }
             } else {
-                let _ = self.chunk_pool.alloc_chunk_to_slot(page_idx as u8, &mut page.data[page_idx]);
+                let _ = self
+                    .chunk_pool
+                    .alloc_chunk_to_slot(page_idx as u8, &mut page.data[page_idx]);
                 page.presence_mask |= 1u64 << page_idx;
                 page.changed_mask |= 1u64 << page_idx;
                 debug_assert!(
@@ -1161,11 +1180,13 @@ impl<T: Component> Drop for Storage<T> {
                         let c_start = chunk_mask.trailing_zeros() as usize;
                         let c_shifted = chunk_mask >> c_start;
                         let c_run = c_shifted.trailing_ones() as usize;
-                            for p in c_start..c_start + c_run {
-                                if let Some((new_ptr, moved_idx)) = self.chunk_pool.free_chunk(page.data[p]) {
-                                    page.data[moved_idx as usize] = new_ptr;
-                                }
+                        for p in c_start..c_start + c_run {
+                            if let Some((new_ptr, moved_idx)) =
+                                self.chunk_pool.free_chunk(page.data[p])
+                            {
+                                page.data[moved_idx as usize] = new_ptr;
                             }
+                        }
                         chunk_mask &= !((u64::MAX >> (64 - c_run)) << c_start);
                     }
                 }
@@ -1180,7 +1201,7 @@ impl<T: Component> Drop for Storage<T> {
     }
 }
 
-    /// A Page within a Storage, containing 64 Chunks.
+/// A Page within a Storage, containing 64 Chunks.
 ///
 /// # Mask Semantics
 ///
@@ -1191,7 +1212,7 @@ pub struct Page<T: Component> {
     pub changed_mask: u64,
     pub count: u32,
     pub data: [*mut Chunk<T>; 64],
-    pub chunk_pool: *mut Pool<Chunk<T>>, 
+    pub chunk_pool: *mut Pool<Chunk<T>>,
     pub pool_slot: u8,
     pub pool_page: *mut PoolPage<Page<T>>,
     pub owner_index: u8,
@@ -1224,6 +1245,7 @@ impl<T: Component> Page<T> {
         true
     }
 
+    #[allow(clippy::missing_safety_doc)]
     pub unsafe fn verify_invariants_ptr(page_ptr: *const Page<T>) -> bool {
         let presence_mask = unsafe { (*page_ptr).presence_mask };
         let fullness_mask = unsafe { (*page_ptr).fullness_mask };
@@ -1273,7 +1295,7 @@ impl<T: Component> Drop for Page<T> {
     }
 }
 
-    /// A Chunk within a Page, containing 64 values of type T.
+/// A Chunk within a Page, containing 64 values of type T.
 ///
 /// # Mask Semantics (Leaf Node)
 ///
@@ -1355,5 +1377,3 @@ impl<T: Component> Drop for Chunk<T> {
         }
     }
 }
-
- 

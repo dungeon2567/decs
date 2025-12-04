@@ -12,6 +12,8 @@ impl Frame {
 
 impl Default for Frame {
     fn default() -> Self {
-        Self { current_tick: Tick(0) }
+        Self {
+            current_tick: Tick(0),
+        }
     }
 }

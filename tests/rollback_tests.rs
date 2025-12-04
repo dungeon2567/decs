@@ -1,22 +1,13 @@
- 
-use decs_macros::Component;
+use decs::frame::Frame;
 use decs::storage::Storage;
 use decs::tick::Tick;
-use decs::frame::Frame;
-use std::sync::Arc;
+use decs_macros::Component;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Component)]
+#[derive(Debug, Clone, Copy, PartialEq, Component, Default)]
 struct TestComponent {
     value: i32,
-}
-
- 
-
-impl Default for TestComponent {
-    fn default() -> Self {
-        TestComponent { value: 0 }
-    }
 }
 
 #[derive(Debug, Component)]
@@ -34,8 +25,14 @@ struct CounterComponent {
 
 impl Clone for Probe {
     fn clone(&self) -> Self {
-        self.clones.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Probe { id: self.id, value: self.value, clones: self.clones.clone(), drops: self.drops.clone() }
+        self.clones
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Probe {
+            id: self.id,
+            value: self.value,
+            clones: self.clones.clone(),
+            drops: self.drops.clone(),
+        }
     }
 }
 
@@ -76,7 +73,10 @@ fn test_rollback_idempotent_remove_add_successful() {
     );
 
     // Step 2: Remove the item (successful - item existed in Storage)
-    assert!(storage.remove(&frame, 0), "Remove operation should succeed when item exists in Storage");
+    assert!(
+        storage.remove(&frame, 0),
+        "Remove operation should succeed when item exists in Storage"
+    );
 
     // Verify: After Add->Remove (idempotent), no change should be tracked
     assert!(
@@ -89,7 +89,8 @@ fn test_rollback_idempotent_remove_add_successful() {
 
     // Verify: Item exists in Storage with the new value
     assert_eq!(
-        storage.get(0).unwrap().value, 200,
+        storage.get(0).unwrap().value,
+        200,
         "Item should exist in Storage with the new value after second Add"
     );
 
@@ -198,23 +199,41 @@ fn test_rollback_full_tree_invariance() {
     );
 
     // Verify final states
-    assert_eq!(storage.get(0).unwrap().value, 10, "Item at index 0 should have final value 10");
-    assert_eq!(storage.get(63).unwrap().value, 2, "Item at index 63 should have value 2");
-    assert_eq!(storage.get(64).unwrap().value, 3, "Item at index 64 should have value 3");
-    assert_eq!(storage.get(4096).unwrap().value, 40, "Item at index 4096 should have final value 40");
-    assert_eq!(storage.get(4160).unwrap().value, 5, "Item at index 4160 should have value 5");
+    assert_eq!(
+        storage.get(0).unwrap().value,
+        10,
+        "Item at index 0 should have final value 10"
+    );
+    assert_eq!(
+        storage.get(63).unwrap().value,
+        2,
+        "Item at index 63 should have value 2"
+    );
+    assert_eq!(
+        storage.get(64).unwrap().value,
+        3,
+        "Item at index 64 should have value 3"
+    );
+    assert_eq!(
+        storage.get(4096).unwrap().value,
+        40,
+        "Item at index 4096 should have final value 40"
+    );
+    assert_eq!(
+        storage.get(4160).unwrap().value,
+        5,
+        "Item at index 4160 should have value 5"
+    );
 }
 
 #[test]
 fn test_rollback_full_coverage_per_index_max_one_op() {
-    use std::sync::{Arc};
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // Use top-level Probe type
 
     // top-level impls used
-
-    
 
     let mut storage = Storage::<Probe>::new();
 
@@ -229,14 +248,24 @@ fn test_rollback_full_coverage_per_index_max_one_op() {
 
     let mut frame = Frame::new(Tick(1));
     for &id in &indices[..5] {
-        let p = Probe { id, value: 32, clones: clone_counts[&id].clone(), drops: drop_counts[&id].clone() };
+        let p = Probe {
+            id,
+            value: 32,
+            clones: clone_counts[&id].clone(),
+            drops: drop_counts[&id].clone(),
+        };
         storage.set(&frame, id, p);
     }
     storage.clear_changed_masks();
 
     frame.current_tick = Tick(23);
     for &id in &[0u32, 63u32, 64u32] {
-        let p = Probe { id, value: 100, clones: clone_counts[&id].clone(), drops: drop_counts[&id].clone() };
+        let p = Probe {
+            id,
+            value: 100,
+            clones: clone_counts[&id].clone(),
+            drops: drop_counts[&id].clone(),
+        };
         storage.set(&frame, id, p);
     }
     storage.clear_changed_masks();
@@ -244,7 +273,12 @@ fn test_rollback_full_coverage_per_index_max_one_op() {
     frame.current_tick = Tick(30);
     {
         let id = 50000u32;
-        let p = Probe { id, value: 77, clones: clone_counts[&id].clone(), drops: drop_counts[&id].clone() };
+        let p = Probe {
+            id,
+            value: 77,
+            clones: clone_counts[&id].clone(),
+            drops: drop_counts[&id].clone(),
+        };
         storage.set(&frame, id, p);
     }
     storage.clear_changed_masks();
@@ -253,9 +287,17 @@ fn test_rollback_full_coverage_per_index_max_one_op() {
     storage.rollback(Tick(2));
 
     for &id in &indices[..5] {
-        assert_eq!(storage.get(id).unwrap().value, 32, "index {} value should equal target tick value 32", id);
+        assert_eq!(
+            storage.get(id).unwrap().value,
+            32,
+            "index {} value should equal target tick value 32",
+            id
+        );
     }
-    assert!(storage.get(50000).is_none(), "index 50000 should not exist at target tick");
+    assert!(
+        storage.get(50000).is_none(),
+        "index 50000 should not exist at target tick"
+    );
 
     for &id in &indices {
         let c = clone_counts[&id].load(Ordering::SeqCst);
@@ -263,8 +305,6 @@ fn test_rollback_full_coverage_per_index_max_one_op() {
         assert!(c <= 1, "index {} clone count {} exceeds 1", id, c);
         assert!(d <= 2, "index {} drop count {} exceeds 2", id, d);
     }
-
-    
 }
 
 #[test]
@@ -276,8 +316,6 @@ fn test_rollback_pages_chunks_5k_min_ops() {
     // Use top-level Probe type
 
     // top-level impls used
-
-    
 
     let mut storage = Storage::<Probe>::new();
 
@@ -297,7 +335,12 @@ fn test_rollback_pages_chunks_5k_min_ops() {
     // Tick 1: create baseline values across 0..n
     let mut frame = Frame::new(Tick(1));
     for id in 0..n {
-        let p = Probe { id, value: 1, clones: clone_counts[&id].clone(), drops: drop_counts[&id].clone() };
+        let p = Probe {
+            id,
+            value: 1,
+            clones: clone_counts[&id].clone(),
+            drops: drop_counts[&id].clone(),
+        };
         storage.set(&frame, id, p);
     }
     storage.clear_changed_masks();
@@ -305,7 +348,12 @@ fn test_rollback_pages_chunks_5k_min_ops() {
     // Tick 23: change a subset (every 3rd) to value 2
     frame.current_tick = Tick(23);
     for id in (0..n).step_by(3) {
-        let p = Probe { id, value: 2, clones: clone_counts[&id].clone(), drops: drop_counts[&id].clone() };
+        let p = Probe {
+            id,
+            value: 2,
+            clones: clone_counts[&id].clone(),
+            drops: drop_counts[&id].clone(),
+        };
         storage.set(&frame, id, p);
     }
     storage.clear_changed_masks();
@@ -320,7 +368,12 @@ fn test_rollback_pages_chunks_5k_min_ops() {
     // Tick 30: create new entities after target across n..n+1000
     frame.current_tick = Tick(30);
     for id in n..(n + 1000) {
-        let p = Probe { id, value: 99, clones: clone_counts[&id].clone(), drops: drop_counts[&id].clone() };
+        let p = Probe {
+            id,
+            value: 99,
+            clones: clone_counts[&id].clone(),
+            drops: drop_counts[&id].clone(),
+        };
         storage.set(&frame, id, p);
     }
     storage.clear_changed_masks();
@@ -330,10 +383,19 @@ fn test_rollback_pages_chunks_5k_min_ops() {
     storage.rollback(Tick(2));
 
     for id in 0..n {
-        assert_eq!(storage.get(id).unwrap().value, 1, "index {} should equal target tick value 1", id);
+        assert_eq!(
+            storage.get(id).unwrap().value,
+            1,
+            "index {} should equal target tick value 1",
+            id
+        );
     }
     for id in n..(n + 1000) {
-        assert!(storage.get(id).is_none(), "index {} should not exist at target tick", id);
+        assert!(
+            storage.get(id).is_none(),
+            "index {} should not exist at target tick",
+            id
+        );
     }
 
     for id in 0..(n + 1000) {
@@ -381,7 +443,11 @@ fn test_rollback_minimal_ops_no_leak() {
     assert_eq!(storage.get(idx).unwrap().value, 32);
 
     // Strict minimal op: exactly one clone to reach target state
-    assert_eq!(CLONES.load(Ordering::SeqCst), 1, "Rollback should perform exactly one clone");
+    assert_eq!(
+        CLONES.load(Ordering::SeqCst),
+        1,
+        "Rollback should perform exactly one clone"
+    );
 
     // Invariants hold (no structural inconsistencies)
     assert!(storage.verify_invariants());
@@ -390,7 +456,11 @@ fn test_rollback_minimal_ops_no_leak() {
     // Drop storage to release all values; ensure drops happened (no leaks observed)
     drop(storage);
     let drops = DROPS.load(Ordering::SeqCst);
-    assert!(drops >= 3, "Expected at least three drops (stored old values + final value), got {}", drops);
+    assert!(
+        drops >= 3,
+        "Expected at least three drops (stored old values + final value), got {}",
+        drops
+    );
 }
 #[test]
 fn test_rollback_pages_chunks_20k_values_correct() {
@@ -416,7 +486,7 @@ fn test_rollback_pages_chunks_20k_values_correct() {
     }
     storage.clear_changed_masks();
 
-    frame.current_tick = Tick(40);
+    // current tick change not required before rollback
     storage.rollback(Tick(2));
 
     for id in 0..n {
