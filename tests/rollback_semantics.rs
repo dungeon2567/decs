@@ -7,10 +7,15 @@ use decs_macros::Component;
 use std::sync::Once;
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Position { x: f32, y: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct TestC { v: i32 }
+struct TestC {
+    v: i32,
+}
 
 static INIT: Once = Once::new();
 fn register_components_once() {

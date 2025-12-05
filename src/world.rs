@@ -59,6 +59,24 @@ impl World {
         self.current_tick = Tick(self.current_tick.0.wrapping_add(1));
         let frame = Frame::new(self.current_tick());
         self.scheduler.run(&frame);
+
+        for seg in 0..4 {
+            let base = seg * 64;
+            let mut remaining_mask = self.storage_mask[seg];
+            while remaining_mask != 0 {
+                let start = remaining_mask.trailing_zeros() as usize;
+                let shifted = remaining_mask >> start;
+                let run_len = shifted.trailing_ones() as usize;
+                for i in start..start + run_len {
+                    let idx = base + i;
+                    if let Some(ref mut boxed) = self.storage_ptrs[idx] {
+                        boxed.clear_changed_masks_all_levels();
+                        debug_assert!(boxed.changed_mask_zero());
+                    }
+                }
+                remaining_mask &= !((1u64 << run_len) - 1) << start;
+            }
+        }
     }
 
     /// Gets the Entity storage pointer.
@@ -139,28 +157,31 @@ impl World {
         for seg in 0..4 {
             let base = seg * 64;
             let mut remaining_mask = self.storage_mask[seg];
-            
+
             while remaining_mask != 0 {
                 let start = remaining_mask.trailing_zeros() as usize;
                 let shifted = remaining_mask >> start;
                 let run_len = shifted.trailing_ones() as usize;
-                
+
                 for i in start..start + run_len {
                     let idx = base + i;
-                    
+
                     // Call rollback through StorageLike trait
                     if let Some(ref mut storage) = self.storage_ptrs[idx] {
                         storage.rollback(target_tick);
                     }
                 }
-                
+
                 remaining_mask &= !((1u64 << run_len) - 1) << start;
             }
         }
-        
+
         // Update world tick to target_tick
         self.set_tick(target_tick);
-        debug_assert!(self.verify_invariants(), "World invariants violated after rollback");
+        debug_assert!(
+            self.verify_invariants(),
+            "World invariants violated after rollback"
+        );
     }
 }
 

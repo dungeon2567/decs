@@ -89,7 +89,9 @@ impl Parse for SystemInput {
                     while inner.peek(syn::Token![,]) {
                         let _comma: syn::Token![,] = inner.parse()?;
                         // ignore extra entries
-                        if inner.is_empty() { break; }
+                        if inner.is_empty() {
+                            break;
+                        }
                         let _ = inner.parse::<Type>();
                     }
                 }
@@ -451,7 +453,7 @@ pub fn system(input: TokenStream) -> TokenStream {
     let item_mask_intersections: Vec<_> = (1..required_count)
         .map(|i| {
             let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
-            quote! { m &= unsafe { (&*#chunk_var).presence_mask }; }
+            quote! { m &= #chunk_var.presence_mask; }
         })
         .collect();
     let item_changed_intersections: Vec<_> = changed_indices_set
@@ -459,7 +461,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         .filter_map(|i| {
             if *i < required_count {
                 let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
-                Some(quote! { m &= unsafe { (&*#chunk_var).changed_mask }; })
+                Some(quote! { m &= #chunk_var.changed_mask; })
             } else {
                 None
             }
@@ -562,6 +564,7 @@ pub fn system(input: TokenStream) -> TokenStream {
                         #(#page_refs_init)*
                         let mut page_mask = page_0.presence_mask;
                         #(#page_mask_intersections)*
+                        #(#page_changed_intersections)*
                         let mut none_chunk_full_or: u64 = 0u64;
                         #(#none_chunk_full_or_inits)*
                         page_mask &= !none_chunk_full_or;
@@ -571,10 +574,7 @@ pub fn system(input: TokenStream) -> TokenStream {
                             let page_idx = page_mask_iter.trailing_zeros() as usize;
                             #(#chunk_refs_init)*
                             let mut item_mask = {
-                                let mut m = {
-                                    #[allow(unused_unsafe)]
-                                    unsafe { (&*chunk_0).presence_mask }
-                                };
+                                let mut m = chunk_0.presence_mask;
                                 #(#item_mask_intersections)*
                                 #(#item_changed_intersections)*
                                 m

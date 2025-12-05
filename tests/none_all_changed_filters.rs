@@ -7,10 +7,16 @@ use decs_macros::Component;
 use std::sync::Once;
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Position { x: f32, y: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Velocity { x: f32, y: f32 }
+struct Velocity {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
 struct Frozen;
@@ -162,7 +168,10 @@ fn none_filter_counts_without_frozen() {
         for i in 0..1000u32 {
             let pos = world.get_storage_mut::<Position>();
             pos.set(&f, i, Position { x: 0.0, y: 0.0 });
-            if i % 5 == 0 { let frz = world.get_storage_mut::<Frozen>(); frz.set(&f, i, Frozen); }
+            if i % 5 == 0 {
+                let frz = world.get_storage_mut::<Frozen>();
+                frz.set(&f, i, Frozen);
+            }
         }
     }
     let c = count_none_frozen(&mut world);
@@ -178,7 +187,10 @@ fn all_filter_counts_with_velocity_present() {
         for i in 0..1200u32 {
             let pos = world.get_storage_mut::<Position>();
             pos.set(&f, i, Position { x: 0.0, y: 0.0 });
-            if i % 3 == 0 { let vel = world.get_storage_mut::<Velocity>(); vel.set(&f, i, Velocity { x: 1.0, y: 2.0 }); }
+            if i % 3 == 0 {
+                let vel = world.get_storage_mut::<Velocity>();
+                vel.set(&f, i, Velocity { x: 1.0, y: 2.0 });
+            }
         }
     }
     let c = count_all_velocity(&mut world);
@@ -194,8 +206,18 @@ fn changed_filter_counts_only_mutated_positions() {
         let f = Frame::new(world.current_tick());
         for i in 0..900u32 {
             let pos = world.get_storage_mut::<Position>();
-            pos.set(&f, i, Position { x: i as f32, y: 0.0 });
-            if i % 4 == 0 { let vel = world.get_storage_mut::<Velocity>(); vel.set(&f, i, Velocity { x: 1.0, y: 1.0 }); }
+            pos.set(
+                &f,
+                i,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                },
+            );
+            if i % 4 == 0 {
+                let vel = world.get_storage_mut::<Velocity>();
+                vel.set(&f, i, Velocity { x: 1.0, y: 1.0 });
+            }
         }
     }
     let m = MutPosOnVel::new(&mut world);
@@ -215,8 +237,14 @@ fn none_all_combination() {
         for i in 0..256u32 {
             let pos = world.get_storage_mut::<Position>();
             pos.set(&f, i, Position { x: 0.0, y: 0.0 });
-            if i % 2 == 0 { let vel = world.get_storage_mut::<Velocity>(); vel.set(&f, i, Velocity { x: 1.0, y: 2.0 }); }
-            if i % 3 == 0 { let frz = world.get_storage_mut::<Frozen>(); frz.set(&f, i, Frozen); }
+            if i % 2 == 0 {
+                let vel = world.get_storage_mut::<Velocity>();
+                vel.set(&f, i, Velocity { x: 1.0, y: 2.0 });
+            }
+            if i % 3 == 0 {
+                let frz = world.get_storage_mut::<Frozen>();
+                frz.set(&f, i, Frozen);
+            }
         }
     }
     let c_none = count_none_frozen(&mut world);

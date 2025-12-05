@@ -1,16 +1,22 @@
 use decs::ecs::Ecs;
 use decs::frame::Frame;
 use decs::system; // for `system!`
-use decs::world::World;
 use decs::view::{View, ViewMut};
+use decs::world::World;
 use decs_macros::Component;
 use std::sync::Once;
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Position { x: f32, y: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Velocity { x: f32, y: f32 }
+struct Velocity {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
 struct Frozen;
@@ -48,7 +54,8 @@ fn count_none_frozen_with_vel(world: &mut World) -> u32 {
                         let pos_chunk = &*pos_page.data[page_idx];
                         let vel_chunk = &*vel_page.data[page_idx];
                         let frz_chunk = &*frz_page.data[page_idx];
-                        let item_mask = (pos_chunk.presence_mask & vel_chunk.presence_mask) & !frz_chunk.presence_mask;
+                        let item_mask = (pos_chunk.presence_mask & vel_chunk.presence_mask)
+                            & !frz_chunk.presence_mask;
                         total = total.saturating_add(item_mask.count_ones());
                     }
                     page_mask &= !((u64::MAX >> (64 - p_len)) << p_start);
@@ -209,9 +216,17 @@ fn changed_query_counts_modified_positions() {
         for i in 0..1000u32 {
             {
                 let pos = world.get_storage_mut::<Position>();
-                pos.set(&frame, i, Position { x: i as f32, y: i as f32 });
+                pos.set(
+                    &frame,
+                    i,
+                    Position {
+                        x: i as f32,
+                        y: i as f32,
+                    },
+                );
             }
-            if i % 20 == 0 { // 50 items will be eligible for mutation
+            if i % 20 == 0 {
+                // 50 items will be eligible for mutation
                 let vel = world.get_storage_mut::<Velocity>();
                 vel.set(&frame, i, Velocity { x: 1.0, y: 0.0 });
             }
@@ -240,7 +255,8 @@ fn all_query_counts_items_with_frozen_present() {
                 let pos = world.get_storage_mut::<Position>();
                 pos.set(&frame, i, Position { x: 0.0, y: 0.0 });
             }
-            if i % 4 == 0 { // 500 items
+            if i % 4 == 0 {
+                // 500 items
                 let frz = world.get_storage_mut::<Frozen>();
                 frz.set(&frame, i, Frozen);
             }

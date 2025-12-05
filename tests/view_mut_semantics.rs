@@ -7,10 +7,16 @@ use decs_macros::Component;
 use std::sync::Once;
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Position { x: f32, y: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Velocity { x: f32, y: f32 }
+struct Velocity {
+    x: f32,
+    y: f32,
+}
 
 static INIT: Once = Once::new();
 fn register_components_once() {
@@ -130,7 +136,14 @@ fn view_and_viewmut_combination_multiple_chunks() {
         let f = Frame::new(world.current_tick());
         for i in [0, 63, 64, 127, 128, 255].iter().copied() {
             let pos = world.get_storage_mut::<Position>();
-            pos.set(&f, i, Position { x: i as f32, y: i as f32 });
+            pos.set(
+                &f,
+                i,
+                Position {
+                    x: i as f32,
+                    y: i as f32,
+                },
+            );
             let vel = world.get_storage_mut::<Velocity>();
             vel.set(&f, i, Velocity { x: 0.5, y: 1.5 });
         }
@@ -152,4 +165,3 @@ fn view_and_viewmut_combination_multiple_chunks() {
     world.scheduler_mut().build_wavefronts();
     world.run();
 }
-

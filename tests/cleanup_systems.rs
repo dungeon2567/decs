@@ -7,10 +7,15 @@ use decs_macros::Component;
 use std::sync::Once;
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Position { x: f32, y: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Health { hp: i32 }
+struct Health {
+    hp: i32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
 struct DestroyedTag;
@@ -90,7 +95,14 @@ fn cleanup_preserves_invariants_across_pages() {
         let f = Frame::new(world.current_tick());
         for i in [0, 63, 64, 4096, 4160].iter().copied() {
             let pos = world.get_storage_mut::<Position>();
-            pos.set(&f, i, Position { x: i as f32, y: i as f32 });
+            pos.set(
+                &f,
+                i,
+                Position {
+                    x: i as f32,
+                    y: i as f32,
+                },
+            );
             let hp = world.get_storage_mut::<Health>();
             hp.set(&f, i, Health { hp: 10 });
             let d = world.get_storage_mut::<decs::component::Destroyed>();
@@ -111,4 +123,3 @@ fn cleanup_preserves_invariants_across_pages() {
     world.scheduler_mut().build_wavefronts();
     world.run();
 }
-

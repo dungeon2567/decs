@@ -94,8 +94,8 @@ impl Scheduler {
         // Build group membership maps
         let mut systems_by_group: HashMap<TypeId, Vec<usize>> = HashMap::new();
         let mut groups_by_system: Vec<Vec<&dyn crate::system::SystemGroup>> = vec![Vec::new(); n];
-        for i in 0..n {
-            if let Some(mut group) = self.systems[i].parent() {
+        for (i, system) in self.systems.iter().enumerate() {
+            if let Some(mut group) = system.parent() {
                 loop {
                     let gid = group.as_any().type_id();
                     systems_by_group.entry(gid).or_default().push(i);
@@ -110,8 +110,8 @@ impl Scheduler {
         }
         // Enforce group Before/After constraints among systems
         let mut constrained_edges: HashSet<(usize, usize)> = HashSet::new();
-        for i in 0..n {
-            for group in &groups_by_system[i] {
+        for (i, groups) in groups_by_system.iter().enumerate() {
+            for group in groups {
                 for before_type in group.before() {
                     if let Some(targets) = systems_by_group.get(before_type) {
                         for &j in targets {

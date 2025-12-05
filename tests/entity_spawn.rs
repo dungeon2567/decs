@@ -70,4 +70,3 @@ fn spawn_respects_fullness_mask_across_page() {
     world.scheduler_mut().build_wavefronts();
     world.run();
 }
-

@@ -403,8 +403,12 @@ impl<T: Clone> RollbackStorage<T> {
     /// Verifies that all invariants hold for this RollbackStorage and all its Pages.
     /// Returns true if all invariants are satisfied, false otherwise.
     pub fn verify_invariants(&self) -> bool {
-        for i in 0..64 {
-            if (self.changed_mask >> i) & 1 != 0 {
+        let mut mask = self.changed_mask;
+        while mask != 0 {
+            let start = mask.trailing_zeros() as usize;
+            let shifted = mask >> start;
+            let run_len = shifted.trailing_ones() as usize;
+            for i in start..start + run_len {
                 unsafe {
                     let page = &**self.data[i].assume_init_ref();
                     if !page.verify_invariants() {
@@ -412,8 +416,8 @@ impl<T: Clone> RollbackStorage<T> {
                     }
                 }
             }
+            mask &= !((u64::MAX >> (64 - run_len)) << start);
         }
-
         true
     }
 }
@@ -507,8 +511,12 @@ impl<T> RollbackPage<T> {
     /// Verifies that all invariants hold for this RollbackPage and all its Chunks.
     /// Returns true if all invariants are satisfied, false otherwise.
     pub fn verify_invariants(&self) -> bool {
-        for i in 0..64 {
-            if (self.changed_mask >> i) & 1 != 0 {
+        let mut mask = self.changed_mask;
+        while mask != 0 {
+            let start = mask.trailing_zeros() as usize;
+            let shifted = mask >> start;
+            let run_len = shifted.trailing_ones() as usize;
+            for i in start..start + run_len {
                 unsafe {
                     let chunk = &**self.data[i].assume_init_ref();
                     if !chunk.verify_invariants() {
@@ -516,8 +524,8 @@ impl<T> RollbackPage<T> {
                     }
                 }
             }
+            mask &= !((u64::MAX >> (64 - run_len)) << start);
         }
-
         true
     }
 

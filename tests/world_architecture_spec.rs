@@ -7,10 +7,16 @@ use decs_macros::Component;
 use std::sync::Once;
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Position { x: f32, y: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Velocity { x: f32, y: f32 }
+struct Velocity {
+    x: f32,
+    y: f32,
+}
 
 #[derive(Clone, Debug, PartialEq, Component)]
 struct Frozen;
@@ -51,7 +57,14 @@ fn world_invariants_with_sets_and_removes() {
         for &i in &[0u32, 63, 64, 4096] {
             {
                 let pos = world.get_storage_mut::<Position>();
-                pos.set(&frame, i, Position { x: i as f32, y: i as f32 });
+                pos.set(
+                    &frame,
+                    i,
+                    Position {
+                        x: i as f32,
+                        y: i as f32,
+                    },
+                );
             }
             {
                 let vel = world.get_storage_mut::<Velocity>();
@@ -157,7 +170,7 @@ fn world_system_with_none_filter_and_invariants() {
 fn world_rollback_over_many_ticks_manual() {
     register_components_once();
     let mut world = World::new();
-    
+
     world.set_tick(decs::tick::Tick(1));
     {
         let f1 = Frame::new(world.current_tick());

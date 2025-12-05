@@ -7,11 +7,16 @@ use decs_macros::Component;
 use std::sync::Once;
 
 #[derive(Clone, Debug, PartialEq, Component)]
-struct Position { x: f32, y: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+}
 
 static INIT: Once = Once::new();
 fn register_components_once() {
-    INIT.call_once(|| { Ecs::register::<Position>(); });
+    INIT.call_once(|| {
+        Ecs::register::<Position>();
+    });
 }
 
 system!(NoopSystem { query fn update(_pos: View<Position>) { let _ = _pos.x; } });
@@ -81,4 +86,3 @@ fn removing_all_values_drops_page_and_chunk() {
     world.scheduler_mut().build_wavefronts();
     world.run();
 }
-

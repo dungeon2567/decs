@@ -11,6 +11,10 @@ pub trait StorageLike: Any {
     /// Returns true if all invariants are satisfied, false otherwise.
     fn verify_invariants(&self) -> bool;
 
+    fn changed_mask_zero(&self) -> bool;
+
+    fn clear_changed_masks_all_levels(&mut self);
+
     /// Rolls back this storage to the specified tick.
     /// This is a type-erased method that internally calls Storage<T>::rollback.
     fn rollback(&mut self, target_tick: Tick);
@@ -41,6 +45,7 @@ pub trait StorageLike: Any {
 /// ## fullness_mask
 /// - For non-leaf nodes (Storage, Page): Bit at index `i` is set (1) if all children are FULL
 /// - Used to track when all children have reached their capacity
+#[repr(align(64))]
 pub struct Storage<T: Component> {
     pub presence_mask: u64,
     pub fullness_mask: u64,
@@ -60,7 +65,7 @@ impl<T: Component> Storage<T> {
     pub fn new() -> Self {
         // Allocate default chunk (will be leaked intentionally as static default)
         let default_chunk_ptr: *const Chunk<T> = Box::into_raw(Box::new(Chunk::<T>::new()));
-        
+
         // Allocate default page (will be leaked intentionally as static default)
         let default_page_ptr: *const Page<T> = Box::into_raw(Box::new(Page::<T> {
             presence_mask: 0,
@@ -98,7 +103,7 @@ impl<T: Component> Storage<T> {
             let mut merged = std::mem::take(&mut self.prev);
             merged.push_back(old);
             self.prev = merged;
-            
+
             // Limit rollback history to 64 ticks
             // This prevents unbounded memory growth but limits maximum rollback distance
             while self.prev.len() > 64 {
@@ -122,7 +127,7 @@ impl<T: Component> Storage<T> {
 
         unsafe {
             let page_ptr = self.data[storage_idx as usize];
-        
+
             let chunk_ptr = (*page_ptr).data[page_idx as usize];
 
             let bit = 1u64 << chunk_idx;
@@ -130,7 +135,7 @@ impl<T: Component> Storage<T> {
             if ((*chunk_ptr).presence_mask & bit) == 0 {
                 return None;
             }
-            
+
             Some((*chunk_ptr).data[chunk_idx as usize].assume_init_ref())
         }
     }
@@ -525,7 +530,9 @@ impl<T: Component> Storage<T> {
             // Note: self.presence_mask and self.fullness_mask were already updated above
             let page_ptr = self.data[storage_idx as usize];
             if !std::ptr::eq(page_ptr, self.default_page_ptr) {
-                unsafe { drop(Box::from_raw(page_ptr)); }
+                unsafe {
+                    drop(Box::from_raw(page_ptr));
+                }
             }
             self.data[storage_idx as usize] = self.default_page_ptr as *mut Page<T>;
             debug_assert!(
@@ -552,248 +559,174 @@ impl<T: Component> Storage<T> {
     {
         // Efficient rollback using bitmasks to track visited indices.
         // This ensures at most 1 clone and 1 drop per index without HashMap/Vec allocations.
-        
+
         // Find the generation value at or before target_tick
+        // Search from newest to oldest: self.rollback -> self.prev.iter().rev()
         let mut found_generation = None;
+        let all_rollbacks_rev = std::iter::once(&self.rollback).chain(self.prev.iter().rev());
         
-        // Search from newest to oldest in self.prev (reversed)
-        for rb in self.prev.iter().rev() {
+        // We can stop searching once we find a tick <= target_tick
+        for rb in all_rollbacks_rev {
             if rb.tick() <= target_tick {
                 found_generation = Some(rb.get_saved_generation());
                 break;
             }
         }
-        
-        // If not found in prev, check if current rollback is at or before target_tick
-        if found_generation.is_none() && self.rollback.tick() <= target_tick {
-            found_generation = Some(self.rollback.get_saved_generation());
-        }
-        
+
         // Build unified storage-level changed_mask (OR of all rollback states > target_tick)
         let mut unified_storage_mask = 0u64;
 
-        for rb in self.prev.iter() {
-            if rb.tick() > target_tick {
-                unified_storage_mask |= rb.changed_mask;
-            }
+        // Optimization: iterate newest to oldest and stop when tick <= target_tick
+        let relevant_rollbacks_rev = std::iter::once(&self.rollback)
+            .chain(self.prev.iter().rev())
+            .take_while(|rb| rb.tick() > target_tick);
+
+        for rb in relevant_rollbacks_rev {
+            unified_storage_mask |= rb.changed_mask;
         }
 
-        if self.rollback.tick() > target_tick {
-            unified_storage_mask |= self.rollback.changed_mask;
-        }
-        
         // Iterate through each storage index that has changes
         let mut storage_mask = unified_storage_mask;
 
         while storage_mask != 0 {
             let storage_idx = storage_mask.trailing_zeros();
             storage_mask &= !(1u64 << storage_idx);
-            
+
             // Build unified page-level changed_mask for this storage index
             let mut unified_page_mask = 0u64;
 
-            for rb in self.prev.iter() {
-                if rb.tick() > target_tick
-                    && let Some(rb_page) = rb.get_page(storage_idx) {
-                        unified_page_mask |= rb_page.changed_mask;
-                    }
-            }
+            // Re-create the iterator for this scope (borrow checker)
+            let relevant_rollbacks_rev = std::iter::once(&self.rollback)
+                .chain(self.prev.iter().rev())
+                .take_while(|rb| rb.tick() > target_tick);
 
-            if self.rollback.tick() > target_tick
-                && let Some(rb_page) = self.rollback.get_page(storage_idx) {
+            for rb in relevant_rollbacks_rev {
+                if let Some(rb_page) = rb.get_page(storage_idx) {
                     unified_page_mask |= rb_page.changed_mask;
                 }
-            
+            }
+
             // Iterate through each page index that has changes
             let mut page_mask = unified_page_mask;
 
             while page_mask != 0 {
                 let page_idx = page_mask.trailing_zeros();
                 page_mask &= !(1u64 << page_idx);
-                
+
                 // visited_mask tracks which chunk indices we've already processed
                 let mut visited_mask = 0u64;
-                
-                // Process rollback states from oldest to newest (self.prev is ordered oldest to newest)
-                for rb in self.prev.iter() {
-                    if rb.tick() > target_tick
-                        && let Some(rb_page) = rb.get_page(storage_idx)
-                            && let Some(rb_chunk) = rb_page.get(page_idx) {
-                                // Process all three change types for this chunk
-                                let combined_mask = rb_chunk.created_mask | rb_chunk.changed_mask | rb_chunk.removed_mask;
-                                let unvisited = combined_mask & !visited_mask;
-                                
-                                let mut m = unvisited;
 
-                                while m != 0 {
-                                    let chunk_idx = m.trailing_zeros();
-                                    m &= !(1u64 << chunk_idx);
-                                    
-                                    // Mark as visited
-                                    visited_mask |= 1u64 << chunk_idx;
-                                    
-                                    // Determine action based on this rollback state
-                                    let is_created = (rb_chunk.created_mask >> chunk_idx) & 1 != 0;
-                                    
-                                    let chunk_idx_usize = chunk_idx as usize;
-                                    let page_idx_usize = page_idx as usize;
-                                    let storage_idx_usize = storage_idx as usize;
-                                    
-                                    if is_created {
-                                        // Remove created item (at most 1 drop)
-                                        if (self.presence_mask >> storage_idx) & 1 != 0 {
-                                            let page = unsafe { &mut *self.data[storage_idx_usize] };
-                                            if (page.presence_mask >> page_idx) & 1 != 0 {
-                                                let chunk = unsafe { &mut *page.data[page_idx_usize] };
-                                                if (chunk.presence_mask >> chunk_idx) & 1 != 0 {
-                                                    unsafe { chunk.data[chunk_idx_usize].assume_init_drop(); }
-                                                    chunk.presence_mask &= !(1u64 << chunk_idx);
-                                                    chunk.fullness_mask &= !(1u64 << chunk_idx);
-                                                    page.count = page.count.saturating_sub(1);
-                                                    self.count = self.count.saturating_sub(1);
-                                                    // chunk cannot be full after removal
-                                                    page.fullness_mask &= !(1u64 << page_idx);
-                                                    // drop chunk if it became empty
-                                                    if chunk.presence_mask == 0 {
-                                                        let chunk_ptr = page.data[page_idx_usize];
-                                                        if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
-                                                            unsafe { drop(Box::from_raw(chunk_ptr)); }
-                                                        }
-                                                        page.data[page_idx_usize] = self.default_chunk_ptr as *mut Chunk<T>;
-                                                        page.presence_mask &= !(1u64 << page_idx);
+                // Process rollback states from oldest to newest (self.prev is ordered oldest to newest)
+                // Optimization: skip ticks <= target_tick used skip_while
+                // Note: We MUST iterate Oldest -> Newest for correct "first modification" restoration logic
+                let relevant_rollbacks = self.prev.iter()
+                    .chain(std::iter::once(&self.rollback))
+                    .skip_while(|rb| rb.tick() <= target_tick);
+
+                for rb in relevant_rollbacks {
+                    if let Some(rb_page) = rb.get_page(storage_idx)
+                        && let Some(rb_chunk) = rb_page.get(page_idx)
+                    {
+                        // Process all three change types for this chunk
+                        let combined_mask =
+                            rb_chunk.created_mask | rb_chunk.changed_mask | rb_chunk.removed_mask;
+                        let unvisited = combined_mask & !visited_mask;
+
+                        let mut m = unvisited;
+
+                        while m != 0 {
+                            let chunk_idx = m.trailing_zeros();
+                            m &= !(1u64 << chunk_idx);
+
+                            // Mark as visited
+                            visited_mask |= 1u64 << chunk_idx;
+
+                            // Determine action based on this rollback state
+                            let is_created = (rb_chunk.created_mask >> chunk_idx) & 1 != 0;
+
+                            let chunk_idx_usize = chunk_idx as usize;
+                            let page_idx_usize = page_idx as usize;
+                            let storage_idx_usize = storage_idx as usize;
+
+                            if is_created {
+                                // Remove created item (at most 1 drop)
+                                if (self.presence_mask >> storage_idx) & 1 != 0 {
+                                    let page = unsafe { &mut *self.data[storage_idx_usize] };
+                                    if (page.presence_mask >> page_idx) & 1 != 0 {
+                                        let chunk = unsafe { &mut *page.data[page_idx_usize] };
+                                        if (chunk.presence_mask >> chunk_idx) & 1 != 0 {
+                                            unsafe {
+                                                chunk.data[chunk_idx_usize].assume_init_drop();
+                                            }
+                                            chunk.presence_mask &= !(1u64 << chunk_idx);
+                                            chunk.fullness_mask &= !(1u64 << chunk_idx);
+                                            page.count = page.count.saturating_sub(1);
+                                            self.count = self.count.saturating_sub(1);
+                                            // chunk cannot be full after removal
+                                            page.fullness_mask &= !(1u64 << page_idx);
+                                            // drop chunk if it became empty
+                                            if chunk.presence_mask == 0 {
+                                                let chunk_ptr = page.data[page_idx_usize];
+                                                if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr)
+                                                {
+                                                    unsafe {
+                                                        drop(Box::from_raw(chunk_ptr));
                                                     }
                                                 }
+                                                page.data[page_idx_usize] =
+                                                    self.default_chunk_ptr as *mut Chunk<T>;
+                                                page.presence_mask &= !(1u64 << page_idx);
                                             }
-                                        }
-                                    } else {
-                                        // Restore changed/removed item (at most 1 clone + 1 drop)
-                                        // Clone old value from rollback storage
-                                        let old_value = unsafe { rb_chunk.data[chunk_idx_usize].assume_init_ref().clone() };
-                                        
-                                        // Ensure page/chunk exist
-                                        if (self.presence_mask >> storage_idx) & 1 == 0 {
-                                            let new_page = Box::new(Page::new(self.default_chunk_ptr));
-                                            self.data[storage_idx_usize] = Box::into_raw(new_page);
-                                            self.presence_mask |= 1u64 << storage_idx;
-                                        }
-                                        
-                                        let page = unsafe { &mut *self.data[storage_idx_usize] };
-                                        if (page.presence_mask >> page_idx) & 1 == 0 {
-                                            let new_chunk = Box::new(Chunk::new());
-                                            page.data[page_idx_usize] = Box::into_raw(new_chunk);
-                                            page.presence_mask |= 1u64 << page_idx;
-                                        }
-                                        
-                                        let chunk = unsafe { &mut *page.data[page_idx_usize] };
-                                        let was_present = (chunk.presence_mask >> chunk_idx) & 1 != 0;
-                                        
-                                        if was_present {
-                                            unsafe { chunk.data[chunk_idx_usize].assume_init_drop(); }
-                                        } else {
-                                            page.count = page.count.saturating_add(1);
-                                            self.count = self.count.saturating_add(1);
-                                        }
-                                        
-                                        chunk.data[chunk_idx_usize].write(old_value);
-                                        chunk.presence_mask |= 1u64 << chunk_idx;
-                                        chunk.fullness_mask |= 1u64 << chunk_idx;
-                                        // update page fullness bit for this chunk
-                                        if chunk.presence_mask == u64::MAX {
-                                            page.fullness_mask |= 1u64 << page_idx;
-                                        } else {
-                                            page.fullness_mask &= !(1u64 << page_idx);
                                         }
                                     }
                                 }
-                            }
-                }
-                
-                // Process current rollback (newest)
-                if self.rollback.tick() > target_tick
-                    && let Some(rb_page) = self.rollback.get_page(storage_idx)
-                        && let Some(rb_chunk) = rb_page.get(page_idx) {
-                            let combined_mask = rb_chunk.created_mask | rb_chunk.changed_mask | rb_chunk.removed_mask;
-                            let unvisited = combined_mask & !visited_mask;
-                            
-                            let mut m = unvisited;
-                            while m != 0 {
-                                let chunk_idx = m.trailing_zeros();
-                                m &= !(1u64 << chunk_idx);
-                                
-                                // Determine action based on this rollback state
-                                let is_created = (rb_chunk.created_mask >> chunk_idx) & 1 != 0;
-                                
-                                let chunk_idx_usize = chunk_idx as usize;
-                                let page_idx_usize = page_idx as usize;
-                                let storage_idx_usize = storage_idx as usize;
-                                
-                                if is_created {
-                                    // Remove created item (at most 1 drop)
-                                    if (self.presence_mask >> storage_idx) & 1 != 0 {
-                                        let page = unsafe { &mut *self.data[storage_idx_usize] };
-                                        if (page.presence_mask >> page_idx) & 1 != 0 {
-                                            let chunk = unsafe { &mut *page.data[page_idx_usize] };
-                                            if (chunk.presence_mask >> chunk_idx) & 1 != 0 {
-                                                unsafe { chunk.data[chunk_idx_usize].assume_init_drop(); }
-                                                chunk.presence_mask &= !(1u64 << chunk_idx);
-                                                chunk.fullness_mask &= !(1u64 << chunk_idx);
-                                                page.count = page.count.saturating_sub(1);
-                                                self.count = self.count.saturating_sub(1);
-                                                // chunk cannot be full after removal
-                                                page.fullness_mask &= !(1u64 << page_idx);
-                                                // drop chunk if it became empty
-                                                if chunk.presence_mask == 0 {
-                                                    let chunk_ptr = page.data[page_idx_usize];
-                                                    if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
-                                                        unsafe { drop(Box::from_raw(chunk_ptr)); }
-                                                    }
-                                                    page.data[page_idx_usize] = self.default_chunk_ptr as *mut Chunk<T>;
-                                                    page.presence_mask &= !(1u64 << page_idx);
-                                                }
-                                            }
-                                        }
+                            } else {
+                                // Restore changed/removed item (at most 1 clone + 1 drop)
+                                // Clone old value from rollback storage
+                                let old_value = unsafe {
+                                    rb_chunk.data[chunk_idx_usize].assume_init_ref().clone()
+                                };
+
+                                // Ensure page/chunk exist
+                                if (self.presence_mask >> storage_idx) & 1 == 0 {
+                                    let new_page = Box::new(Page::new(self.default_chunk_ptr));
+                                    self.data[storage_idx_usize] = Box::into_raw(new_page);
+                                    self.presence_mask |= 1u64 << storage_idx;
+                                }
+
+                                let page = unsafe { &mut *self.data[storage_idx_usize] };
+                                if (page.presence_mask >> page_idx) & 1 == 0 {
+                                    let new_chunk = Box::new(Chunk::new());
+                                    page.data[page_idx_usize] = Box::into_raw(new_chunk);
+                                    page.presence_mask |= 1u64 << page_idx;
+                                }
+
+                                let chunk = unsafe { &mut *page.data[page_idx_usize] };
+                                let was_present = (chunk.presence_mask >> chunk_idx) & 1 != 0;
+
+                                if was_present {
+                                    unsafe {
+                                        chunk.data[chunk_idx_usize].assume_init_drop();
                                     }
                                 } else {
-                                    // Restore changed/removed item (at most 1 clone + 1 drop)
-                                    // Clone old value from rollback storage
-                                    let old_value = unsafe { rb_chunk.data[chunk_idx_usize].assume_init_ref().clone() };
-                                    
-                                    // Ensure page/chunk exist
-                                    if (self.presence_mask >> storage_idx) & 1 == 0 {
-                                        let new_page = Box::new(Page::new(self.default_chunk_ptr));
-                                        self.data[storage_idx_usize] = Box::into_raw(new_page);
-                                        self.presence_mask |= 1u64 << storage_idx;
-                                    }
-                                    
-                                    let page = unsafe { &mut *self.data[storage_idx_usize] };
-                                    if (page.presence_mask >> page_idx) & 1 == 0 {
-                                        let new_chunk = Box::new(Chunk::new());
-                                        page.data[page_idx_usize] = Box::into_raw(new_chunk);
-                                        page.presence_mask |= 1u64 << page_idx;
-                                    }
-                                    
-                                    let chunk = unsafe { &mut *page.data[page_idx_usize] };
-                                    let was_present = (chunk.presence_mask >> chunk_idx) & 1 != 0;
-                                    
-                                    if was_present {
-                                        unsafe { chunk.data[chunk_idx_usize].assume_init_drop(); }
-                                    } else {
-                                        page.count = page.count.saturating_add(1);
-                                        self.count = self.count.saturating_add(1);
-                                    }
-                                    
-                                    chunk.data[chunk_idx_usize].write(old_value);
-                                    chunk.presence_mask |= 1u64 << chunk_idx;
-                                    chunk.fullness_mask |= 1u64 << chunk_idx;
-                                    // update page fullness bit for this chunk
-                                    if chunk.presence_mask == u64::MAX {
-                                        page.fullness_mask |= 1u64 << page_idx;
-                                    } else {
-                                        page.fullness_mask &= !(1u64 << page_idx);
-                                    }
+                                    page.count = page.count.saturating_add(1);
+                                    self.count = self.count.saturating_add(1);
+                                }
+
+                                chunk.data[chunk_idx_usize].write(old_value);
+                                chunk.presence_mask |= 1u64 << chunk_idx;
+                                chunk.fullness_mask |= 1u64 << chunk_idx;
+                                // update page fullness bit for this chunk
+                                if chunk.presence_mask == u64::MAX {
+                                    page.fullness_mask |= 1u64 << page_idx;
+                                } else {
+                                    page.fullness_mask &= !(1u64 << page_idx);
                                 }
                             }
                         }
+                    }
+                }
+
                 // finalize page-level masks and possibly drop empty page
                 {
                     let storage_idx_usize = storage_idx as usize;
@@ -803,7 +736,9 @@ impl<T: Component> Storage<T> {
                         // keep invariant: page.fullness_mask subset of presence
                         page.fullness_mask &= page.presence_mask;
                         if page.presence_mask == 0 {
-                            unsafe { drop(Box::from_raw(page_ptr)); }
+                            unsafe {
+                                drop(Box::from_raw(page_ptr));
+                            }
                             self.data[storage_idx_usize] = self.default_page_ptr as *mut Page<T>;
                             self.presence_mask &= !(1u64 << storage_idx);
                             self.fullness_mask &= !(1u64 << storage_idx);
@@ -820,18 +755,13 @@ impl<T: Component> Storage<T> {
                 }
             }
         }
-        
+
         // Restore generation if found in rollback history
         if let Some(generation_value) = found_generation {
             self.generation = generation_value;
         }
-        self.clear_changed_masks();    
+        self.clear_changed_masks();
     }
-
-
-    
-
-
 
     /// Clears the changed_mask at all levels (Storage, Page, and Chunk).
     /// This recursively clears changed_mask for all pages and chunks that have changes.
@@ -917,6 +847,14 @@ impl<T: Component> StorageLike for Storage<T> {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
+    fn changed_mask_zero(&self) -> bool {
+        self.changed_mask == 0
+    }
+
+    fn clear_changed_masks_all_levels(&mut self) {
+        self.clear_changed_masks();
+    }
 }
 
 impl<T: Component> Default for Storage<T> {
@@ -944,11 +882,7 @@ impl Storage<crate::entity::Entity> {
     /// which directly gives us the position of the first 0.
     fn first_0_index(mask: u64) -> Option<usize> {
         let ones = mask.trailing_ones() as usize;
-        if ones == 64 {
-            None
-        } else {
-            Some(ones)
-        }
+        if ones == 64 { None } else { Some(ones) }
     }
 
     /// Spawns a new entity by finding the first free index.
@@ -962,7 +896,7 @@ impl Storage<crate::entity::Entity> {
         // Find first non-full storage slot using mask
         if let Some(storage_idx) = Self::first_0_index(self.fullness_mask) {
             let storage_bit = 1u64 << storage_idx;
-            
+
             // Ensure page exists
             if (self.presence_mask & storage_bit) == 0 {
                 let new_page = Box::new(Page::new(self.default_chunk_ptr));
@@ -975,7 +909,7 @@ impl Storage<crate::entity::Entity> {
             // Find first non-full chunk in page using mask
             if let Some(page_idx) = Self::first_0_index(page.fullness_mask) {
                 let page_bit = 1u64 << page_idx;
-                
+
                 // Ensure chunk exists
                 if (page.presence_mask & page_bit) == 0 {
                     let new_chunk = Box::new(crate::storage::Chunk::new());
@@ -1013,12 +947,14 @@ impl<T: Component> Drop for Storage<T> {
             for i in start..start + run_len {
                 let page_ptr = self.data[i];
                 if !std::ptr::eq(page_ptr, self.default_page_ptr) {
-                    unsafe { drop(Box::from_raw(page_ptr)); }
+                    unsafe {
+                        drop(Box::from_raw(page_ptr));
+                    }
                 }
             }
             mask &= !((u64::MAX >> (64 - run_len)) << start);
         }
-        
+
         // Drop default pointers (intentionally leaked during new())
         unsafe {
             drop(Box::from_raw(self.default_chunk_ptr as *mut Chunk<T>));
@@ -1032,6 +968,7 @@ impl<T: Component> Drop for Storage<T> {
 /// # Mask Semantics
 ///
 /// See Storage documentation for details on presence_mask and fullness_mask.
+#[repr(align(64))]
 pub struct Page<T: Component> {
     pub presence_mask: u64,
     pub fullness_mask: u64,
@@ -1107,6 +1044,7 @@ impl<T: Component> Drop for Page<T> {
 }
 
 /// A Chunk containing 64 values.
+#[repr(align(64))]
 pub struct Chunk<T: Component> {
     pub presence_mask: u64,
     pub fullness_mask: u64,

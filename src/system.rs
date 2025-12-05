@@ -1,7 +1,7 @@
 use crate::component::{Component, Destroyed};
 use crate::storage::Storage;
 use crate::world::World;
-use decs::world::CleanupGroup;
+use decs::world::{CleanupGroup, SimulationGroup};
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 
@@ -54,7 +54,7 @@ pub trait System: Any + Send + Sync + 'static {
     }
 
     fn parent(&self) -> Option<&dyn SystemGroup> {
-        None
+        Some(SimulationGroup::instance())
     }
 
     /// Returns a reference to the underlying Any trait object for downcasting.
@@ -195,7 +195,10 @@ impl<T: Component> ComponentCleanupSystem<T> {
                                             (page_mut.presence_mask >> page_idx) & 1 != 0
                                         );
                                         // Drop chunk and reset to default
-                                        if !std::ptr::eq(page_mut.data[page_idx], t_storage.default_chunk_ptr) {
+                                        if !std::ptr::eq(
+                                            page_mut.data[page_idx],
+                                            t_storage.default_chunk_ptr,
+                                        ) {
                                             drop(Box::from_raw(page_mut.data[page_idx]));
                                         }
                                         let dc = t_storage.default_chunk_ptr as *mut _;
