@@ -3,7 +3,7 @@ use decs::ecs::Ecs;
 use decs_macros::Component;
 
 #[allow(dead_code)]
-#[derive(Component)]
+#[derive(Component, Clone, Debug)]
 struct Foo(u32);
 
 #[test]

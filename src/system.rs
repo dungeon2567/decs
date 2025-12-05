@@ -78,10 +78,10 @@ unsafe impl<T: Component> Sync for ComponentCleanupSystem<T> {}
 
 impl<T: Component> ComponentCleanupSystem<T> {
     /// Creates a new ComponentCleanupSystem by getting storages from the world.
-    pub fn new(world: &World) -> Self {
+    pub fn new(world: &mut World) -> Self {
         // Get both storages as raw pointers (safe to obtain without unsafe)
-        let t_ptr = world.get_storage_ptr::<T>();
-        let d_ptr = world.get_storage_ptr::<Destroyed>() as *const Storage<Destroyed>;
+        let t_ptr = world.get_storage::<T>();
+        let d_ptr = world.get_storage::<Destroyed>() as *const Storage<Destroyed>;
         Self {
             writes: [TypeId::of::<T>()],
             t_storage: t_ptr,
@@ -213,7 +213,7 @@ impl<T: Component> ComponentCleanupSystem<T> {
                                             page_mut.data[moved_idx as usize] = new_ptr;
                                         }
                                         let dc =
-                                            <T as crate::component::Component>::default_chunk();
+                                            crate::storage::Storage::<T>::default_chunk();
                                         page_mut.data[page_idx] = dc as *const _ as *mut _;
                                         page_mut.presence_mask &= !(1u64 << page_idx);
                                         page_mut.fullness_mask &= !(1u64 << page_idx);
@@ -284,8 +284,8 @@ unsafe impl<T: Component, Group: SystemGroup> Sync for TemporaryComponentCleanup
 
 impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group> {
     /// Creates a new TemporaryComponentCleanupSystem by getting storage from the world.
-    pub fn new(world: &World) -> Self {
-        let t_ptr = world.get_storage_ptr::<T>();
+    pub fn new(world: &mut World) -> Self {
+        let t_ptr = world.get_storage::<T>();
 
         Self {
             writes: [TypeId::of::<T>()],
@@ -381,7 +381,7 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
                             {
                                 t_page.data[moved_idx as usize] = new_ptr;
                             }
-                            let dc = <T as crate::component::Component>::default_chunk();
+                            let dc = crate::storage::Storage::<T>::default_chunk();
                             t_page.data[page_idx] = dc as *const _ as *mut _;
                             // Clear chunk from page mask so Page::drop() won't try to drop it again
                             t_page.presence_mask &= !(1u64 << page_idx);
@@ -408,7 +408,7 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
                     {
                         t_storage.data[moved_idx as usize] = new_ptr;
                     }
-                    let dp = <T as crate::component::Component>::default_page();
+                    let dp = crate::storage::Storage::<T>::default_page();
                     t_storage.data[storage_idx] = dp as *const _ as *mut _;
 
                     // Update storage masks to reflect that page is dropped

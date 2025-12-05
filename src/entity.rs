@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, decs_macros::Component)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Entity(u64);
 
 impl Entity {
@@ -60,5 +60,23 @@ impl std::fmt::Debug for Entity {
             self.index(),
             self.generation()
         )
+    }
+}
+
+#[allow(non_upper_case_globals)]
+static mut __DECS_COMPONENT_ID_Entity: u32 = 0;
+
+// Default page/chunk providers have moved to Storage<T>
+
+impl crate::component::Component for Entity {
+    fn id() -> u32 {
+        unsafe { __DECS_COMPONENT_ID_Entity }
+    }
+    fn initialize(id: u32) {
+        let _ = id;
+    }
+    fn schedule_cleanup_system(world: &mut crate::world::World) {
+        let sys = crate::system::ComponentCleanupSystem::<Entity>::new(world);
+        world.scheduler_mut().add_system(sys);
     }
 }

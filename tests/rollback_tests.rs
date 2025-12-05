@@ -2,8 +2,8 @@ use decs::frame::Frame;
 use decs::storage::Storage;
 use decs::tick::Tick;
 use decs_macros::Component;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Component, Default)]
 struct TestComponent {

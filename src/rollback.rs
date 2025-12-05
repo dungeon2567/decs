@@ -45,15 +45,15 @@ pub type VecQueue<T> = VecDeque<T>;
 /// # Important
 /// The invariants and mask semantics are based on the original Storage<T> at the current tick,
 /// not on RollbackStorage itself. RollbackStorage is a diff/snapshot structure.
-pub struct RollbackStorage<T> {
+pub struct RollbackStorage<T: Clone> {
     pub changed_mask: u64, // Set if any child has any change (creation, modification, or removal)
     pub tick: Tick,
     pub data: [MaybeUninit<Box<RollbackPage<T>, &'static Bump>>; 64],
     pub generation_at_tick_start: u64,
-    arena_box: Box<Bump>,
+    pub arena_box: Box<Bump>,
 }
 
-impl<T> RollbackStorage<T> {
+impl<T: Clone> RollbackStorage<T> {
     #[inline]
     fn arena(&self) -> &'static Bump {
         unsafe { &*(self.arena_box.as_ref() as *const Bump) }
@@ -418,13 +418,13 @@ impl<T> RollbackStorage<T> {
     }
 }
 
-impl<T> Default for RollbackStorage<T> {
+impl<T: Clone> Default for RollbackStorage<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> Drop for RollbackStorage<T> {
+impl<T: Clone> Drop for RollbackStorage<T> {
     fn drop(&mut self) {
         // Drop all pages that exist (changed_mask set means the page exists)
         // At this level, we're dropping Box<RollbackPage<T>> structures, not values

@@ -1,6 +1,5 @@
 #![allow(non_upper_case_globals)]
 use crate::component::Component;
-use crate::ecs::Ecs;
 use crate::entity::Entity;
 use crate::frame::Frame;
 use crate::scheduler::Scheduler;
@@ -32,9 +31,8 @@ impl World {
             scheduler: Scheduler::new(),
         };
 
-        // Register Entity component and create its storage immediately
-        Ecs::register::<Entity>();
         let _ = world.get_storage::<Entity>();
+        let _ = world.get_storage::<crate::component::Destroyed>();
 
         world
     }
@@ -89,7 +87,10 @@ impl World {
             let nn = NonNull::new(raw_trait).expect("Box::into_raw should not yield null");
             self.storage_ptrs[index] = Some(nn);
             self.typed_ptrs[index] = raw_typed as *mut ();
+
+            T::schedule_cleanup_system(self);
         }
+
         self.typed_ptrs[index] as *mut Storage<T>
     }
 
@@ -127,21 +128,6 @@ impl World {
         }
 
         true
-    }
-
-    /// Gets a raw pointer to the storage for component type T without requiring a mutable borrow.
-    /// The storage must already exist.
-    pub fn get_storage_ptr<T: Component>(&self) -> *mut Storage<T> {
-        let id = T::id();
-        assert!(id < 256, "Component ID must be less than 256");
-        let seg = (id / 64) as usize;
-        let bit = id % 64;
-        let present = (self.storage_mask[seg] >> bit) & 1 != 0;
-        assert!(
-            present,
-            "Storage for component must exist before get_storage_ptr"
-        );
-        self.typed_ptrs[id as usize] as *mut Storage<T>
     }
 }
 

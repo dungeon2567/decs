@@ -1,10 +1,10 @@
 use proc_macro::TokenStream;
+use quote::format_ident;
 use quote::quote;
 use std::collections::HashMap;
-use syn::{parse_macro_input, Ident, ItemFn, FnArg, Pat, Type, token};
 use syn::parse::{Parse, ParseStream};
 use syn::DeriveInput;
-use quote::format_ident;
+use syn::{parse_macro_input, token, FnArg, Ident, ItemFn, Pat, Type};
 
 /// Input structure for the system! macro
 ///
@@ -49,7 +49,9 @@ impl Parse for SystemInput {
                 while !inner.is_empty() {
                     let ty: Type = inner.parse()?;
                     none_types.push(ty);
-                    if inner.peek(syn::Token![,]) { let _comma: syn::Token![,] = inner.parse()?; }
+                    if inner.peek(syn::Token![,]) {
+                        let _comma: syn::Token![,] = inner.parse()?;
+                    }
                 }
             } else if kw == "All" {
                 let _: token::Eq = content.parse()?;
@@ -58,7 +60,9 @@ impl Parse for SystemInput {
                 while !inner.is_empty() {
                     let ty: Type = inner.parse()?;
                     all_types.push(ty);
-                    if inner.peek(syn::Token![,]) { let _comma: syn::Token![,] = inner.parse()?; }
+                    if inner.peek(syn::Token![,]) {
+                        let _comma: syn::Token![,] = inner.parse()?;
+                    }
                 }
             } else if kw == "Changed" {
                 let _: token::Eq = content.parse()?;
@@ -67,12 +71,20 @@ impl Parse for SystemInput {
                 while !inner.is_empty() {
                     let ty: Type = inner.parse()?;
                     changed_types.push(ty);
-                    if inner.peek(syn::Token![,]) { let _comma: syn::Token![,] = inner.parse()?; }
+                    if inner.peek(syn::Token![,]) {
+                        let _comma: syn::Token![,] = inner.parse()?;
+                    }
                 }
             } else {
-                return Err(syn::Error::new_spanned(kw, "Expected None=[...], All=[...], or Changed=[...]").into());
+                return Err(syn::Error::new_spanned(
+                    kw,
+                    "Expected None=[...], All=[...], or Changed=[...]",
+                )
+                .into());
             }
-            if content.peek(syn::Token![,]) { let _comma: syn::Token![,] = content.parse()?; }
+            if content.peek(syn::Token![,]) {
+                let _comma: syn::Token![,] = content.parse()?;
+            }
         }
 
         Ok(SystemInput {
@@ -109,8 +121,14 @@ fn extract_view_params(query_fn: &ItemFn) -> Vec<(Ident, Type, bool)> {
 
                     if type_name == "View" || is_mut {
                         if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                            if let Some(syn::GenericArgument::Type(component_type)) = args.args.first() {
-                                params.push((pat_ident.ident.clone(), component_type.clone(), is_mut));
+                            if let Some(syn::GenericArgument::Type(component_type)) =
+                                args.args.first()
+                            {
+                                params.push((
+                                    pat_ident.ident.clone(),
+                                    component_type.clone(),
+                                    is_mut,
+                                ));
                             }
                         }
                     }
@@ -124,7 +142,14 @@ fn extract_view_params(query_fn: &ItemFn) -> Vec<(Ident, Type, bool)> {
 
 #[proc_macro]
 pub fn system(input: TokenStream) -> TokenStream {
-    let SystemInput { system_name, query_fn, none_types, all_types, changed_types, .. } = parse_macro_input!(input as SystemInput);
+    let SystemInput {
+        system_name,
+        query_fn,
+        none_types,
+        all_types,
+        changed_types,
+        ..
+    } = parse_macro_input!(input as SystemInput);
 
     let params = extract_view_params(&query_fn);
 
@@ -133,8 +158,8 @@ pub fn system(input: TokenStream) -> TokenStream {
             &query_fn.sig,
             "Query function must have at least one View<T> or ViewMut<T> parameter",
         )
-            .to_compile_error()
-            .into();
+        .to_compile_error()
+        .into();
     }
 
     let query_fn_name = &query_fn.sig.ident;
@@ -147,7 +172,9 @@ pub fn system(input: TokenStream) -> TokenStream {
     for (_, ty, is_mut) in &params {
         let key = quote! { #ty }.to_string();
         if let Some(idx) = required_index.get_mut(&key) {
-            if *is_mut { required_types[*idx].1 = true; }
+            if *is_mut {
+                required_types[*idx].1 = true;
+            }
         } else {
             required_index.insert(key, required_types.len());
             required_types.push((ty.clone(), *is_mut));
@@ -181,7 +208,11 @@ pub fn system(input: TokenStream) -> TokenStream {
     let mut storage_fields: Vec<(Ident, Type, proc_macro2::TokenStream, bool)> = Vec::new();
     for (i, (ty, is_mut)) in required_types.iter().enumerate() {
         let field_name = Ident::new(&format!("storage_{}", i), system_name.span());
-        let mutability = if *is_mut { quote! { mut } } else { quote! { const } };
+        let mutability = if *is_mut {
+            quote! { mut }
+        } else {
+            quote! { const }
+        };
         storage_fields.push((field_name, ty.clone(), mutability, *is_mut));
     }
     for (j, ty) in negative_types.iter().enumerate() {
@@ -195,7 +226,9 @@ pub fn system(input: TokenStream) -> TokenStream {
         .iter()
         .map(|(_, ty, _)| {
             let key = quote! { #ty }.to_string();
-            *required_index.get(&key).expect("param type must be in required_index")
+            *required_index
+                .get(&key)
+                .expect("param type must be in required_index")
         })
         .collect();
     let param_chunk_idents: Vec<Ident> = param_storage_indices
@@ -226,14 +259,17 @@ pub fn system(input: TokenStream) -> TokenStream {
         }
     }
 
-    let write_types: Vec<_> = params.iter()
+    let write_types: Vec<_> = params
+        .iter()
         .filter(|(_, _, is_mut)| *is_mut)
         .map(|(_, ty, _)| quote! { std::any::TypeId::of::<#ty>() })
         .collect();
 
-    let struct_fields = storage_fields.iter().map(|(field_name, ty, mutability, _)| {
-        quote! { pub #field_name: *#mutability decs::storage::Storage<#ty> }
-    });
+    let struct_fields = storage_fields
+        .iter()
+        .map(|(field_name, ty, mutability, _)| {
+            quote! { pub #field_name: *#mutability decs::storage::Storage<#ty> }
+        });
     let debug_struct_fields = quote! {};
 
     let new_storage_init = storage_fields.iter().map(|(field_name, ty, _, is_mut)| {
@@ -280,67 +316,90 @@ pub fn system(input: TokenStream) -> TokenStream {
     };
 
     // Prepare parameter gathering using precomputed chunk references
-    let param_gathering: Vec<_> = params.iter().enumerate().map(|(i, (param_name, _ty, is_mut))| {
-        let chunk_var = &param_chunk_idents[i];
-        if *is_mut {
-            let storage_field = &storage_fields[param_storage_indices[i]].0;
-            quote! {
-                let mut #param_name = decs::view::ViewMut::new(
-                    #chunk_var,
-                    chunk_item_idx as u32,
-                    self.#storage_field,
-                    storage_idx as u32,
-                    page_idx as u32,
-                    _frame.current_tick,
-                );
+    let param_gathering: Vec<_> = params
+        .iter()
+        .enumerate()
+        .map(|(i, (param_name, _ty, is_mut))| {
+            let chunk_var = &param_chunk_idents[i];
+            if *is_mut {
+                let storage_field = &storage_fields[param_storage_indices[i]].0;
+                quote! {
+                    let mut #param_name = decs::view::ViewMut::new(
+                        #chunk_var,
+                        chunk_item_idx as u32,
+                        self.#storage_field,
+                        storage_idx as u32,
+                        page_idx as u32,
+                        _frame.current_tick,
+                    );
+                }
+            } else {
+                quote! {
+                    let #param_name = {
+                        let data = #chunk_var.data[chunk_item_idx].assume_init_ref();
+                        decs::view::View::new(data)
+                    };
+                }
             }
-        } else {
-            quote! {
-                let #param_name = {
-                    let data = #chunk_var.data[chunk_item_idx].assume_init_ref();
-                    decs::view::View::new(data)
-                };
-            }
-        }
-    }).collect();
+        })
+        .collect();
 
-    let call_args: Vec<_> = params.iter().map(|(name, _, is_mut)| {
-        if *is_mut { quote! { &mut #name } } else { quote! { #name } }
-    }).collect();
+    let call_args: Vec<_> = params
+        .iter()
+        .map(|(name, _, is_mut)| {
+            if *is_mut {
+                quote! { &mut #name }
+            } else {
+                quote! { #name }
+            }
+        })
+        .collect();
 
     // Generate intersection operations across all storages at page and chunk levels,
     // and precompute page/chunk references for each storage
-    let page_refs_init: Vec<_> = (0..required_count).map(|i| {
-        let (name, _ty, _mutability, is_mut) = &storage_fields[i];
-        let page_var = Ident::new(&format!("page_{}", i), system_name.span());
-        if *is_mut {
-            quote! { let mut #page_var = &mut *(*self.#name).data[storage_idx]; }
-        } else {
-            quote! { let #page_var = &*(*self.#name).data[storage_idx]; }
-        }
-    }).collect();
-    let page_mask_intersections: Vec<_> = (1..required_count).map(|i| {
-        let page_var = Ident::new(&format!("page_{}", i), system_name.span());
-        quote! { page_mask &= #page_var.presence_mask; }
-    }).collect();
-    let mut changed_indices_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let page_refs_init: Vec<_> = (0..required_count)
+        .map(|i| {
+            let (name, _ty, _mutability, is_mut) = &storage_fields[i];
+            let page_var = Ident::new(&format!("page_{}", i), system_name.span());
+            if *is_mut {
+                quote! { let mut #page_var = &mut *(*self.#name).data[storage_idx]; }
+            } else {
+                quote! { let #page_var = &*(*self.#name).data[storage_idx]; }
+            }
+        })
+        .collect();
+    let page_mask_intersections: Vec<_> = (1..required_count)
+        .map(|i| {
+            let page_var = Ident::new(&format!("page_{}", i), system_name.span());
+            quote! { page_mask &= #page_var.presence_mask; }
+        })
+        .collect();
+    let mut changed_indices_set: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
     for ty in &changed_types {
         let key = quote! { #ty }.to_string();
-        if let Some(idx) = required_index.get(&key) { changed_indices_set.insert(*idx); }
+        if let Some(idx) = required_index.get(&key) {
+            changed_indices_set.insert(*idx);
+        }
     }
-    let page_changed_intersections: Vec<_> = changed_indices_set.iter().filter_map(|i| {
-        if *i < required_count {
-            let page_var = Ident::new(&format!("page_{}", i), system_name.span());
-            Some(quote! { page_mask &= #page_var.changed_mask; })
-        } else { None }
-    }).collect();
+    let page_changed_intersections: Vec<_> = changed_indices_set
+        .iter()
+        .filter_map(|i| {
+            if *i < required_count {
+                let page_var = Ident::new(&format!("page_{}", i), system_name.span());
+                Some(quote! { page_mask &= #page_var.changed_mask; })
+            } else {
+                None
+            }
+        })
+        .collect();
     let chunk_refs_init: Vec<_> = (0..required_count).map(|i| {
         let is_mut = storage_fields[i].3;
         let page_var = Ident::new(&format!("page_{}", i), system_name.span());
         let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
         if is_mut {
             let storage_field = &storage_fields[i].0;
-            quote! { 
+            quote! {
                 {
                     let ct = _frame.current_tick;
                     if ((*self.#storage_field).rollback.tick() != ct) {
@@ -359,48 +418,63 @@ pub fn system(input: TokenStream) -> TokenStream {
                         }
                     }
                 }
-                let mut #chunk_var = &mut *#page_var.data[page_idx]; 
+                let mut #chunk_var = &mut *#page_var.data[page_idx];
             }
         } else {
             quote! { let #chunk_var = &*#page_var.data[page_idx]; }
         }
     }).collect();
-    let item_mask_intersections: Vec<_> = (1..required_count).map(|i| {
-        let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
-        quote! { m &= #chunk_var.presence_mask; }
-    }).collect();
-    let item_changed_intersections: Vec<_> = changed_indices_set.iter().filter_map(|i| {
-        if *i < required_count {
+    let item_mask_intersections: Vec<_> = (1..required_count)
+        .map(|i| {
             let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
-            Some(quote! { m &= #chunk_var.changed_mask; })
-        } else { None }
-    }).collect();
-
-    let none_chunk_full_or_inits: Vec<_> = if storage_fields.len() == required_count { Vec::new() } else {
-        (required_count..storage_fields.len()).map(|i| {
-            let name = &storage_fields[i].0;
-            quote! {
-                {
-                    let ns = &*self.#name;
-                    let ns_page = &*(*ns).data[storage_idx];
-                    none_chunk_full_or |= ns_page.fullness_mask;
-                }
+            quote! { m &= #chunk_var.presence_mask; }
+        })
+        .collect();
+    let item_changed_intersections: Vec<_> = changed_indices_set
+        .iter()
+        .filter_map(|i| {
+            if *i < required_count {
+                let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
+                Some(quote! { m &= #chunk_var.changed_mask; })
+            } else {
+                None
             }
-        }).collect()
+        })
+        .collect();
+
+    let none_chunk_full_or_inits: Vec<_> = if storage_fields.len() == required_count {
+        Vec::new()
+    } else {
+        (required_count..storage_fields.len())
+            .map(|i| {
+                let name = &storage_fields[i].0;
+                quote! {
+                    {
+                        let ns = &*self.#name;
+                        let ns_page = &*(*ns).data[storage_idx];
+                        none_chunk_full_or |= ns_page.fullness_mask;
+                    }
+                }
+            })
+            .collect()
     };
 
-    let none_item_presence_or_inits: Vec<_> = if storage_fields.len() == required_count { Vec::new() } else {
-        (required_count..storage_fields.len()).map(|i| {
-            let name = &storage_fields[i].0;
-            quote! {
-                {
-                    let ns = &*self.#name;
-                    let ns_page = &*(*ns).data[storage_idx];
-                    let ns_chunk = &*ns_page.data[page_idx];
-                    none_item_presence_or |= ns_chunk.presence_mask;
+    let none_item_presence_or_inits: Vec<_> = if storage_fields.len() == required_count {
+        Vec::new()
+    } else {
+        (required_count..storage_fields.len())
+            .map(|i| {
+                let name = &storage_fields[i].0;
+                quote! {
+                    {
+                        let ns = &*self.#name;
+                        let ns_page = &*(*ns).data[storage_idx];
+                        let ns_chunk = &*ns_page.data[page_idx];
+                        none_item_presence_or |= ns_chunk.presence_mask;
+                    }
                 }
-            }
-        }).collect()
+            })
+            .collect()
     };
 
     let propagate_changes: Vec<_> = storage_fields
@@ -419,7 +493,6 @@ pub fn system(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-
     // Generate storage refresh sequences
 
     let expanded = quote! {
@@ -427,25 +500,25 @@ pub fn system(input: TokenStream) -> TokenStream {
             #(#struct_fields,)*
             #debug_struct_fields
         }
-        
+
         unsafe impl Send for #system_name {}
         unsafe impl Sync for #system_name {}
-        
+
         impl #system_name {
             pub fn new(world: &mut decs::world::World) -> Self {
                 unsafe {
                     #(#new_storage_init)*
-                    
+
                     Self {
                         #(#new_field_init,)*
                         #new_debug_init
                     }
                 }
             }
-            
+
             fn #query_fn_name(#query_params) #query_fn_body
         }
-        
+
         impl decs::system::System for #system_name {
             fn run(&self, _frame: &decs::frame::Frame) {
                 unsafe {
@@ -454,7 +527,7 @@ pub fn system(input: TokenStream) -> TokenStream {
                         let storage_start = storage_mask.trailing_zeros() as usize;
                         let shifted = storage_mask >> storage_start;
                         let storage_run_len = shifted.trailing_ones() as usize;
-                        
+
                         for storage_idx in storage_start..storage_start + storage_run_len {
                             #(#page_refs_init)*
                             let mut page_mask = page_0.presence_mask;
@@ -463,14 +536,14 @@ pub fn system(input: TokenStream) -> TokenStream {
                             let mut none_chunk_full_or: u64 = 0u64;
                             #(#none_chunk_full_or_inits)*
                             page_mask &= !none_chunk_full_or;
-                            
-                            
+
+
                             let mut page_mask_iter = page_mask;
                             while page_mask_iter != 0 {
                                 let page_start = page_mask_iter.trailing_zeros() as usize;
                                 let page_shifted = page_mask_iter >> page_start;
                                 let page_run_len = page_shifted.trailing_ones() as usize;
-                                
+
                                 for page_idx in page_start..page_start + page_run_len {
                                     #(#chunk_refs_init)*
                                     let mut item_mask = {
@@ -482,14 +555,14 @@ pub fn system(input: TokenStream) -> TokenStream {
                                     let mut none_item_presence_or: u64 = 0u64;
                                     #(#none_item_presence_or_inits)*
                                     item_mask &= !none_item_presence_or;
-                                    
-                                    
+
+
                                     let mut item_mask_iter = item_mask;
                                     while item_mask_iter != 0 {
                                         let item_start = item_mask_iter.trailing_zeros() as usize;
                                         let item_shifted = item_mask_iter >> item_start;
                                         let item_run_len = item_shifted.trailing_ones() as usize;
-                                        
+
                                         for chunk_item_idx in item_start..item_start + item_run_len {
                                             #(#param_gathering)*
                                             #system_name::#query_fn_name(#(#call_args),*);
@@ -497,15 +570,15 @@ pub fn system(input: TokenStream) -> TokenStream {
                                         }
                                         item_mask_iter &= !((u64::MAX >> (64 - item_run_len)) << item_start);
                                     }
-                                    
+
                                 }
                                 page_mask_iter &= !((u64::MAX >> (64 - page_run_len)) << page_start);
                             }
-                            
+
                         }
                         storage_mask &= !((u64::MAX >> (64 - storage_run_len)) << storage_start);
                     }
-                    
+
                 }
             }
 
@@ -513,16 +586,16 @@ pub fn system(input: TokenStream) -> TokenStream {
                 static READS: &[std::any::TypeId] = &[#(#read_types),*];
                 READS
             }
-            
+
             fn writes(&self) -> &[std::any::TypeId] {
                 static WRITES: &[std::any::TypeId] = &[#(#write_types),*];
                 WRITES
             }
-            
+
             fn as_any(&self) -> &dyn std::any::Any {
                 self
             }
-            
+
             fn debug_counts(&self) -> (usize, usize) { (0, 0) }
         }
     };
@@ -543,58 +616,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
         mod #id_mod {
             pub(super) static mut ID: u32 = u32::MAX;
         }
-        #[allow(non_snake_case)]
-        mod #defaults_mod {
-            pub(super) static mut DEFAULT_PAGE: *const decs::storage::Page<super::#name #ty_generics> = std::ptr::null();
-            pub(super) static mut DEFAULT_CHUNK: *const decs::storage::Chunk<super::#name #ty_generics> = std::ptr::null();
-        }
         impl #impl_generics decs::component::Component for #name #ty_generics #where_clause {
-            fn default_page() -> &'static decs::storage::Page<#name #ty_generics> {
-                unsafe {
-                    if self::#defaults_mod::DEFAULT_PAGE.is_null() || self::#defaults_mod::DEFAULT_CHUNK.is_null() {
-                        let default_chunk_box = Box::new(decs::storage::Chunk::<#name #ty_generics>::new());
-                        let default_chunk_ptr_mut: *mut decs::storage::Chunk<#name #ty_generics> = Box::leak(default_chunk_box);
-                        let default_chunk_ptr: *const decs::storage::Chunk<#name #ty_generics> = default_chunk_ptr_mut as *const _;
-                        let page_box = Box::new(decs::storage::Page::<#name #ty_generics> {
-                            presence_mask: 0,
-                            fullness_mask: 0,
-                            changed_mask: 0,
-                            count: 0,
-                            data: [default_chunk_ptr_mut; 64],
-                            chunk_pool: std::ptr::null_mut(),
-                            pool_slot: 0,
-                            pool_page: std::ptr::null_mut(),
-                            owner_index: 0,
-                        });
-                        self::#defaults_mod::DEFAULT_PAGE = Box::leak(page_box) as *const decs::storage::Page<#name #ty_generics>;
-                        self::#defaults_mod::DEFAULT_CHUNK = default_chunk_ptr;
-                    }
-                    &*self::#defaults_mod::DEFAULT_PAGE
-                }
-            }
-            fn default_chunk() -> &'static decs::storage::Chunk<#name #ty_generics> {
-                unsafe {
-                    if self::#defaults_mod::DEFAULT_CHUNK.is_null() || self::#defaults_mod::DEFAULT_PAGE.is_null() {
-                        let default_chunk_box = Box::new(decs::storage::Chunk::<#name #ty_generics>::new());
-                        let default_chunk_ptr_mut: *mut decs::storage::Chunk<#name #ty_generics> = Box::leak(default_chunk_box);
-                        let default_chunk_ptr: *const decs::storage::Chunk<#name #ty_generics> = default_chunk_ptr_mut as *const _;
-                        let page_box = Box::new(decs::storage::Page::<#name #ty_generics> {
-                            presence_mask: 0,
-                            fullness_mask: 0,
-                            changed_mask: 0,
-                            count: 0,
-                            data: [default_chunk_ptr_mut; 64],
-                            chunk_pool: std::ptr::null_mut(),
-                            pool_slot: 0,
-                            pool_page: std::ptr::null_mut(),
-                            owner_index: 0,
-                        });
-                        self::#defaults_mod::DEFAULT_PAGE = Box::leak(page_box) as *const decs::storage::Page<#name #ty_generics>;
-                        self::#defaults_mod::DEFAULT_CHUNK = default_chunk_ptr;
-                    }
-                    &*self::#defaults_mod::DEFAULT_CHUNK
-                }
-            }
             fn id() -> u32 {
                 unsafe { self::#id_mod::ID }
             }
@@ -603,33 +625,15 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                     if self::#id_mod::ID == u32::MAX {
                         self::#id_mod::ID = id;
                     }
-                    if self::#defaults_mod::DEFAULT_CHUNK.is_null() || self::#defaults_mod::DEFAULT_PAGE.is_null() {
-                        let default_chunk_box = Box::new(decs::storage::Chunk::<#name #ty_generics>::new());
-                        let default_chunk_ptr_mut: *mut decs::storage::Chunk<#name #ty_generics> = Box::leak(default_chunk_box);
-                        let default_chunk_ptr: *const decs::storage::Chunk<#name #ty_generics> = default_chunk_ptr_mut as *const _;
-                        let page_box = Box::new(decs::storage::Page::<#name #ty_generics> {
-                            presence_mask: 0,
-                            fullness_mask: 0,
-                            changed_mask: 0,
-                            count: 0,
-                            data: [default_chunk_ptr_mut; 64],
-                            chunk_pool: std::ptr::null_mut(),
-                            pool_slot: 0,
-                            pool_page: std::ptr::null_mut(),
-                            owner_index: 0,
-                        });
-                        self::#defaults_mod::DEFAULT_PAGE = Box::leak(page_box) as *const decs::storage::Page<#name #ty_generics>;
-                        self::#defaults_mod::DEFAULT_CHUNK = default_chunk_ptr;
-                    }
                 }
             }
 
             fn schedule_cleanup_system(world: &mut decs::world::World) {
-                let sys = decs::system::ComponentCleanupSystem::<#name>::new(&*world);
+                let sys = decs::system::ComponentCleanupSystem::<#name>::new(world);
                 world.scheduler_mut().add_system(sys);
             }
         }
-        
+
     })
 }
 struct SystemGroupInput {
@@ -676,25 +680,46 @@ impl Parse for SystemGroupInput {
                 let ty: Type = content.parse()?;
                 parent_type = Some(ty);
             } else {
-                return Err(syn::Error::new_spanned(kw, "Expected Before=[], After=[], or Parent=..."));
+                return Err(syn::Error::new_spanned(
+                    kw,
+                    "Expected Before=[], After=[], or Parent=...",
+                ));
             }
             if content.peek(syn::Token![,]) {
                 let _comma: syn::Token![,] = content.parse()?;
             }
         }
-        Ok(SystemGroupInput { group_name: group_name, before_types, after_types, parent_type })
+        Ok(SystemGroupInput {
+            group_name: group_name,
+            before_types,
+            after_types,
+            parent_type,
+        })
     }
 }
 
 #[proc_macro]
 pub fn system_group(input: TokenStream) -> TokenStream {
-    let SystemGroupInput { group_name, before_types, after_types, parent_type } = parse_macro_input!(input as SystemGroupInput);
-    let before_ids: Vec<_> = before_types.iter().map(|ty| quote! { std::any::TypeId::of::<#ty>() }).collect();
-    let after_ids: Vec<_> = after_types.iter().map(|ty| quote! { std::any::TypeId::of::<#ty>() }).collect();
+    let SystemGroupInput {
+        group_name,
+        before_types,
+        after_types,
+        parent_type,
+    } = parse_macro_input!(input as SystemGroupInput);
+    let before_ids: Vec<_> = before_types
+        .iter()
+        .map(|ty| quote! { std::any::TypeId::of::<#ty>() })
+        .collect();
+    let after_ids: Vec<_> = after_types
+        .iter()
+        .map(|ty| quote! { std::any::TypeId::of::<#ty>() })
+        .collect();
     let parent_static_ident = format_ident!("__decs_group_parent_{}", group_name);
     let parent_static = if let Some(ref ty) = parent_type {
         quote! { static #parent_static_ident: #ty = #ty; }
-    } else { quote! {} };
+    } else {
+        quote! {}
+    };
     let parent_expr = if parent_type.is_some() {
         quote! { Some(&#parent_static_ident) }
     } else {
