@@ -79,7 +79,7 @@ impl World {
         let present = (self.storage_mask[seg] >> bit) & 1 != 0;
 
         if !present {
-            let storage_box: Box<Storage<T>> = Box::new(Storage::<T>::new());
+            let storage_box: Box<Storage<T>> = Box::default();
             let raw = Box::into_raw(storage_box);
             self.storage_mask[seg] |= 1u64 << bit;
             let trait_box: Box<dyn StorageLike> = unsafe { Box::from_raw(raw) };
@@ -132,7 +132,7 @@ impl World {
 impl Drop for World {
     fn drop(&mut self) {
         // Drop systems first to ensure they release any references to storages
-        std::mem::drop(std::mem::replace(&mut self.scheduler, Scheduler::new()));
+        std::mem::drop(std::mem::take(&mut self.scheduler));
         // Then drop storages
         for seg in 0..4 {
             let base = seg * 64;

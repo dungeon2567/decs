@@ -195,7 +195,7 @@ impl<T: Component> ComponentCleanupSystem<T> {
                                             (page_mut.presence_mask >> page_idx) & 1 != 0
                                         );
                                         // Drop chunk and reset to default
-                                        if page_mut.data[page_idx] != t_storage.default_chunk_ptr as *mut _ {
+                                        if !std::ptr::eq(page_mut.data[page_idx], t_storage.default_chunk_ptr) {
                                             drop(Box::from_raw(page_mut.data[page_idx]));
                                         }
                                         let dc = t_storage.default_chunk_ptr as *mut _;
@@ -362,7 +362,7 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
                             let _ = t_chunk;
                             debug_assert!((t_page.presence_mask >> page_idx) & 1 != 0);
                             // Drop chunk and reset to default
-                            if t_page.data[page_idx] != t_storage.default_chunk_ptr as *mut _ {
+                            if !std::ptr::eq(t_page.data[page_idx], t_storage.default_chunk_ptr) {
                                 drop(Box::from_raw(t_page.data[page_idx]));
                             }
                             let dc = t_storage.default_chunk_ptr as *mut _;
@@ -387,7 +387,7 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
 
                     // Drop the page itself and reset pointer to default
                     debug_assert!((t_storage.presence_mask >> storage_idx) & 1 != 0);
-                    if t_storage.data[storage_idx] != t_storage.default_page_ptr as *mut _ {
+                    if !std::ptr::eq(t_storage.data[storage_idx], t_storage.default_page_ptr) {
                         drop(Box::from_raw(t_storage.data[storage_idx]));
                     }
                     let dp = t_storage.default_page_ptr as *mut _;

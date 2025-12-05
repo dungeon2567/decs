@@ -112,8 +112,8 @@ impl<T: Component> Storage<T> {
             return None;
         }
 
-        let chunk_idx = (index & 63) as u32;
-        let page_idx = ((index >> 6) & 63) as u32;
+        let chunk_idx = index & 63;
+        let page_idx = (index >> 6) & 63;
         let storage_idx = index >> 12;
 
         unsafe {
@@ -416,7 +416,7 @@ impl<T: Component> Storage<T> {
                 let page = &mut *self.data[storage_idx as usize];
                 // Drop owned chunk and reset pointer to default
                 let chunk_ptr = page.data[page_idx as usize];
-                if chunk_ptr != self.default_chunk_ptr as *mut Chunk<T> {
+                if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
                     drop(Box::from_raw(chunk_ptr));
                 }
                 page.data[page_idx as usize] = self.default_chunk_ptr as *mut Chunk<T>;
@@ -520,7 +520,7 @@ impl<T: Component> Storage<T> {
             // Page is empty - drop it and reset pointer to default
             // Note: self.presence_mask and self.fullness_mask were already updated above
             let page_ptr = self.data[storage_idx as usize];
-            if page_ptr != self.default_page_ptr as *mut Page<T> {
+            if !std::ptr::eq(page_ptr, self.default_page_ptr) {
                 unsafe { drop(Box::from_raw(page_ptr)); }
             }
             self.data[storage_idx as usize] = self.default_page_ptr as *mut Page<T>;
@@ -563,28 +563,26 @@ impl<T: Component> Storage<T> {
         // Iterate through each storage index that has changes
         let mut storage_mask = unified_storage_mask;
         while storage_mask != 0 {
-            let storage_idx = storage_mask.trailing_zeros() as u32;
+            let storage_idx = storage_mask.trailing_zeros();
             storage_mask &= !(1u64 << storage_idx);
             
             // Build unified page-level changed_mask for this storage index
             let mut unified_page_mask = 0u64;
             for rb in self.prev.iter() {
-                if rb.tick() > target_tick {
-                    if let Some(rb_page) = rb.get_page(storage_idx) {
+                if rb.tick() > target_tick
+                    && let Some(rb_page) = rb.get_page(storage_idx) {
                         unified_page_mask |= rb_page.changed_mask;
                     }
-                }
             }
-            if self.rollback.tick() > target_tick {
-                if let Some(rb_page) = self.rollback.get_page(storage_idx) {
+            if self.rollback.tick() > target_tick
+                && let Some(rb_page) = self.rollback.get_page(storage_idx) {
                     unified_page_mask |= rb_page.changed_mask;
                 }
-            }
             
             // Iterate through each page index that has changes
             let mut page_mask = unified_page_mask;
             while page_mask != 0 {
-                let page_idx = page_mask.trailing_zeros() as u32;
+                let page_idx = page_mask.trailing_zeros();
                 page_mask &= !(1u64 << page_idx);
                 
                 // visited_mask tracks which chunk indices we've already processed
@@ -592,16 +590,16 @@ impl<T: Component> Storage<T> {
                 
                 // Process rollback states from oldest to newest (self.prev is ordered oldest to newest)
                 for rb in self.prev.iter() {
-                    if rb.tick() > target_tick {
-                        if let Some(rb_page) = rb.get_page(storage_idx) {
-                            if let Some(rb_chunk) = rb_page.get(page_idx) {
+                    if rb.tick() > target_tick
+                        && let Some(rb_page) = rb.get_page(storage_idx)
+                            && let Some(rb_chunk) = rb_page.get(page_idx) {
                                 // Process all three change types for this chunk
                                 let combined_mask = rb_chunk.created_mask | rb_chunk.changed_mask | rb_chunk.removed_mask;
                                 let unvisited = combined_mask & !visited_mask;
                                 
                                 let mut m = unvisited;
                                 while m != 0 {
-                                    let chunk_idx = m.trailing_zeros() as u32;
+                                    let chunk_idx = m.trailing_zeros();
                                     m &= !(1u64 << chunk_idx);
                                     
                                     // Mark as visited
@@ -664,20 +662,18 @@ impl<T: Component> Storage<T> {
                                     }
                                 }
                             }
-                        }
-                    }
                 }
                 
                 // Process current rollback (newest)
-                if self.rollback.tick() > target_tick {
-                    if let Some(rb_page) = self.rollback.get_page(storage_idx) {
-                        if let Some(rb_chunk) = rb_page.get(page_idx) {
+                if self.rollback.tick() > target_tick
+                    && let Some(rb_page) = self.rollback.get_page(storage_idx)
+                        && let Some(rb_chunk) = rb_page.get(page_idx) {
                             let combined_mask = rb_chunk.created_mask | rb_chunk.changed_mask | rb_chunk.removed_mask;
                             let unvisited = combined_mask & !visited_mask;
                             
                             let mut m = unvisited;
                             while m != 0 {
-                                let chunk_idx = m.trailing_zeros() as u32;
+                                let chunk_idx = m.trailing_zeros();
                                 m &= !(1u64 << chunk_idx);
                                 
                                 // Determine action based on this rollback state
@@ -737,8 +733,6 @@ impl<T: Component> Storage<T> {
                                 }
                             }
                         }
-                    }
-                }
             }
         }
         
@@ -948,7 +942,7 @@ impl<T: Component> Drop for Storage<T> {
             let run_len = shifted.trailing_ones() as usize;
             for i in start..start + run_len {
                 let page_ptr = self.data[i];
-                if page_ptr != self.default_page_ptr as *mut Page<T> {
+                if !std::ptr::eq(page_ptr, self.default_page_ptr) {
                     unsafe { drop(Box::from_raw(page_ptr)); }
                 }
             }
@@ -1048,6 +1042,12 @@ pub struct Chunk<T: Component> {
     pub fullness_mask: u64,
     pub changed_mask: u64,
     pub data: [MaybeUninit<T>; 64],
+}
+
+impl<T: Component> Default for Chunk<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Component> Chunk<T> {
