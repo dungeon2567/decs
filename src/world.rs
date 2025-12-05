@@ -5,7 +5,6 @@ use crate::frame::Frame;
 use crate::scheduler::Scheduler;
 use crate::storage::{Storage, StorageLike};
 use crate::tick::Tick;
-use std::ptr::NonNull;
 
 decs_macros::system_group!(InitializationGroup {});
 decs_macros::system_group!(SimulationGroup { After=[InitializationGroup] });
@@ -14,8 +13,7 @@ decs_macros::system_group!(DestroyGroup { After=[CleanupGroup] });
 
 pub struct World {
     storage_mask: [u64; 4],
-    storage_ptrs: [Option<NonNull<dyn StorageLike>>; 256],
-    typed_ptrs: [*mut (); 256],
+    storage_ptrs: [Option<Box<dyn StorageLike>>; 256],
     current_tick: Tick,
     scheduler: Scheduler,
 }
@@ -25,8 +23,7 @@ impl World {
     pub fn new() -> Self {
         let mut world = Self {
             storage_mask: [0; 4],
-            storage_ptrs: [None; 256],
-            typed_ptrs: [std::ptr::null_mut(); 256],
+            storage_ptrs: [const { None }; 256],
             current_tick: Tick(0),
             scheduler: Scheduler::new(),
         };
@@ -80,18 +77,21 @@ impl World {
         let present = (self.storage_mask[seg] >> bit) & 1 != 0;
 
         if !present || self.storage_ptrs[index].is_none() {
-            let storage_box: Box<Storage<T>> = Box::default();
+            let storage_box: Box<Storage<T>> = Box::new(Storage::<T>::new());
             self.storage_mask[seg] |= 1u64 << bit;
-            let raw_typed: *mut Storage<T> = Box::into_raw(storage_box);
-            let raw_trait: *mut dyn StorageLike = raw_typed;
-            let nn = NonNull::new(raw_trait).expect("Box::into_raw should not yield null");
-            self.storage_ptrs[index] = Some(nn);
-            self.typed_ptrs[index] = raw_typed as *mut ();
+            let trait_box: Box<dyn StorageLike> = storage_box;
+            self.storage_ptrs[index] = Some(trait_box);
 
             T::schedule_cleanup_system(self);
         }
 
-        self.typed_ptrs[index] as *mut Storage<T>
+        if let Some(ref mut boxed) = self.storage_ptrs[index] {
+            let any = boxed.as_any_mut();
+            let storage: &mut Storage<T> = any.downcast_mut::<Storage<T>>().expect("storage type mismatch");
+            storage as *mut Storage<T>
+        } else {
+            unreachable!()
+        }
     }
 
     /// Returns a mutable reference to the storage for component type T.
@@ -115,8 +115,8 @@ impl World {
                 let run_len = shifted.trailing_ones() as usize;
                 for i in start..start + run_len {
                     let idx = base + i;
-                    if let Some(ptr) = self.storage_ptrs[idx] {
-                        if !unsafe { ptr.as_ref().verify_invariants() } {
+                    if let Some(ref boxed) = self.storage_ptrs[idx] {
+                        if !boxed.verify_invariants() {
                             return false;
                         }
                     } else {
@@ -131,34 +131,34 @@ impl World {
     }
 }
 
+impl Drop for World {
+    fn drop(&mut self) {
+        // Drop systems first to ensure they release any references to storages
+        std::mem::drop(std::mem::replace(&mut self.scheduler, Scheduler::new()));
+        // Then drop storages
+        for seg in 0..4 {
+            let base = seg * 64;
+            let mut remaining_mask = self.storage_mask[seg];
+            while remaining_mask != 0 {
+                let start = remaining_mask.trailing_zeros() as usize;
+                let shifted = remaining_mask >> start;
+                let run_len = shifted.trailing_ones() as usize;
+                for i in start..start + run_len {
+                    let idx = base + i;
+                    if let Some(boxed) = self.storage_ptrs[idx].take() {
+                        drop(boxed);
+                    }
+                }
+                remaining_mask &= !((1u64 << run_len) - 1) << start;
+            }
+        }
+    }
+}
+
 impl Default for World {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Drop for World {
-    fn drop(&mut self) {
-        unsafe {
-            for seg in 0..4 {
-                let base = seg * 64;
-                let mut remaining_mask = self.storage_mask[seg];
-                while remaining_mask != 0 {
-                    let start = remaining_mask.trailing_zeros() as usize;
-                    let shifted = remaining_mask >> start;
-                    let run_len = shifted.trailing_ones() as usize;
-                    for i in start..start + run_len {
-                        let idx = base + i;
-                        if let Some(nn) = self.storage_ptrs[idx] {
-                            let raw = nn.as_ptr();
-                            let boxed: Box<dyn StorageLike> = Box::from_raw(raw);
-                            drop(boxed);
-                            self.storage_ptrs[idx] = None;
-                        }
-                    }
-                    remaining_mask &= !((1u64 << run_len) - 1) << start;
-                }
-            }
-        }
-    }
-}
+// (existing Drop above handles dropping scheduler first, then storages)

@@ -212,9 +212,8 @@ impl<T: Component> ComponentCleanupSystem<T> {
                                         {
                                             page_mut.data[moved_idx as usize] = new_ptr;
                                         }
-                                        let dc =
-                                            crate::storage::Storage::<T>::default_chunk();
-                                        page_mut.data[page_idx] = dc as *const _ as *mut _;
+                                        let dc = t_storage.default_chunk_ptr as *mut _;
+                                        page_mut.data[page_idx] = dc;
                                         page_mut.presence_mask &= !(1u64 << page_idx);
                                         page_mut.fullness_mask &= !(1u64 << page_idx);
                                     }
@@ -381,8 +380,8 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
                             {
                                 t_page.data[moved_idx as usize] = new_ptr;
                             }
-                            let dc = crate::storage::Storage::<T>::default_chunk();
-                            t_page.data[page_idx] = dc as *const _ as *mut _;
+                            let dc = t_storage.default_chunk_ptr as *mut _;
+                            t_page.data[page_idx] = dc;
                             // Clear chunk from page mask so Page::drop() won't try to drop it again
                             t_page.presence_mask &= !(1u64 << page_idx);
                             t_page.fullness_mask &= !(1u64 << page_idx);
@@ -408,8 +407,8 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
                     {
                         t_storage.data[moved_idx as usize] = new_ptr;
                     }
-                    let dp = crate::storage::Storage::<T>::default_page();
-                    t_storage.data[storage_idx] = dp as *const _ as *mut _;
+                    let dp = t_storage.default_page_ptr as *mut _;
+                    t_storage.data[storage_idx] = dp;
 
                     // Update storage masks to reflect that page is dropped
                     t_storage.presence_mask &= !(1u64 << storage_idx);

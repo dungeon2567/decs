@@ -267,8 +267,12 @@ pub fn system(input: TokenStream) -> TokenStream {
 
     let struct_fields = storage_fields
         .iter()
-        .map(|(field_name, ty, mutability, _)| {
-            quote! { pub #field_name: *#mutability decs::storage::Storage<#ty> }
+        .map(|(field_name, ty, _mutability, is_mut)| {
+            if *is_mut {
+                quote! { pub #field_name: *mut decs::storage::Storage<#ty> }
+            } else {
+                quote! { pub #field_name: *const decs::storage::Storage<#ty> }
+            }
         });
     let debug_struct_fields = quote! {};
 
@@ -336,7 +340,7 @@ pub fn system(input: TokenStream) -> TokenStream {
             } else {
                 quote! {
                     let #param_name = {
-                        let data = #chunk_var.data[chunk_item_idx].assume_init_ref();
+                        let data = unsafe { (&*#chunk_var).data[chunk_item_idx].assume_init_ref() };
                         decs::view::View::new(data)
                     };
                 }
@@ -371,7 +375,7 @@ pub fn system(input: TokenStream) -> TokenStream {
     let page_mask_intersections: Vec<_> = (1..required_count)
         .map(|i| {
             let page_var = Ident::new(&format!("page_{}", i), system_name.span());
-            quote! { page_mask &= #page_var.presence_mask; }
+            quote! { page_mask &= unsafe { (*#page_var).presence_mask }; }
         })
         .collect();
     let mut changed_indices_set: std::collections::HashSet<usize> =
@@ -387,7 +391,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         .filter_map(|i| {
             if *i < required_count {
                 let page_var = Ident::new(&format!("page_{}", i), system_name.span());
-                Some(quote! { page_mask &= #page_var.changed_mask; })
+                Some(quote! { page_mask &= unsafe { (*#page_var).changed_mask }; })
             } else {
                 None
             }
@@ -418,7 +422,7 @@ pub fn system(input: TokenStream) -> TokenStream {
                         }
                     }
                 }
-                let mut #chunk_var = &mut *#page_var.data[page_idx];
+                let mut #chunk_var = &mut *(*#page_var).data[page_idx];
             }
         } else {
             quote! { let #chunk_var = &*#page_var.data[page_idx]; }
@@ -427,7 +431,7 @@ pub fn system(input: TokenStream) -> TokenStream {
     let item_mask_intersections: Vec<_> = (1..required_count)
         .map(|i| {
             let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
-            quote! { m &= #chunk_var.presence_mask; }
+            quote! { m &= unsafe { (&*#chunk_var).presence_mask }; }
         })
         .collect();
     let item_changed_intersections: Vec<_> = changed_indices_set
@@ -435,7 +439,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         .filter_map(|i| {
             if *i < required_count {
                 let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
-                Some(quote! { m &= #chunk_var.changed_mask; })
+                Some(quote! { m &= unsafe { (&*#chunk_var).changed_mask }; })
             } else {
                 None
             }
@@ -450,9 +454,9 @@ pub fn system(input: TokenStream) -> TokenStream {
                 let name = &storage_fields[i].0;
                 quote! {
                     {
-                        let ns = &*self.#name;
-                        let ns_page = &*(*ns).data[storage_idx];
-                        none_chunk_full_or |= ns_page.fullness_mask;
+                        let ns = self.#name;
+                        let ns_page = unsafe { (*ns).data[storage_idx] };
+                        none_chunk_full_or |= unsafe { (*ns_page).fullness_mask };
                     }
                 }
             })
@@ -467,10 +471,10 @@ pub fn system(input: TokenStream) -> TokenStream {
                 let name = &storage_fields[i].0;
                 quote! {
                     {
-                        let ns = &*self.#name;
-                        let ns_page = &*(*ns).data[storage_idx];
-                        let ns_chunk = &*ns_page.data[page_idx];
-                        none_item_presence_or |= ns_chunk.presence_mask;
+                        let ns = self.#name;
+                        let ns_page = unsafe { (*ns).data[storage_idx] };
+                        let ns_chunk = unsafe { (*ns_page).data[page_idx] };
+                        none_item_presence_or |= unsafe { (*ns_chunk).presence_mask };
                     }
                 }
             })
@@ -547,7 +551,12 @@ pub fn system(input: TokenStream) -> TokenStream {
                                 for page_idx in page_start..page_start + page_run_len {
                                     #(#chunk_refs_init)*
                                     let mut item_mask = {
-                                        let mut m = chunk_0.presence_mask;
+                                        let mut m = {
+                                            // First chunk may be a raw pointer or &mut
+                                            // Use pointer read for uniform behavior
+                                            #[allow(unused_unsafe)]
+                                            unsafe { (&*chunk_0).presence_mask }
+                                        };
                                         #(#item_mask_intersections)*
                                         #(#item_changed_intersections)*
                                         m
@@ -610,7 +619,6 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
     let generics = input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let id_mod = format_ident!("__decs_component_id_{}", name);
-    let defaults_mod = format_ident!("__decs_component_defaults_{}", name);
     TokenStream::from(quote! {
         #[allow(non_snake_case)]
         mod #id_mod {

@@ -153,13 +153,14 @@ impl<T: Component> Pool<Page<T>> {
         owner_index: u8,
         out_slot: &mut *mut Page<T>,
         chunk_pool: *mut Pool<Chunk<T>>,
+        default_chunk_ptr: *const Chunk<T>,
     ) -> *mut Page<T> {
         let page_ref: &mut PoolPage<Page<T>> = match self.last_page_mut() {
             Some(p) if p.len < 32 => unsafe { &mut *(p as *mut _) },
             _ => unsafe { &mut *(self.push_new_page() as *mut _) },
         };
         let idx = page_ref.len;
-        let boxed = Box::new(Page::new_with_pool(chunk_pool));
+        let boxed = Box::new(Page::new_with_pool(chunk_pool, default_chunk_ptr as *mut Chunk<T>));
         let inner_ptr = Box::into_raw(boxed);
         page_ref.items[idx].write(unsafe { NonNull::new_unchecked(inner_ptr) });
         page_ref.len += 1;

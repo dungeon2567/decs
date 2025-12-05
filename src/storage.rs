@@ -51,50 +51,31 @@ pub struct Storage<T: Component> {
     pub chunk_pool: Pool<Chunk<T>>,
     pub data: [*mut Page<T>; 64],
     pub generation: u64,
+    pub default_chunk_box: Box<Chunk<T>>,
+    pub default_page_box: Box<Page<T>>,
+    pub default_chunk_ptr: *const Chunk<T>,
+    pub default_page_ptr: *const Page<T>,
 }
 
 impl<T: Component> Storage<T> {
-    /// Returns a lazily initialized default Chunk for type T.
-    pub fn default_chunk() -> &'static Chunk<T> {
-        use std::sync::OnceLock;
-        static ONCE: OnceLock<()> = OnceLock::new();
-        static mut PTR: *const () = std::ptr::null();
-        ONCE.get_or_init(|| {
-            let b = Box::new(Chunk::<T>::new());
-            let raw: *mut Chunk<T> = Box::into_raw(b);
-            unsafe { PTR = raw as *const () };
-        });
-        unsafe { &*(PTR as *const Chunk<T>) }
-    }
-
-    /// Returns a lazily initialized default Page for type T.
-    pub fn default_page() -> &'static Page<T> {
-        use std::sync::OnceLock;
-        static ONCE: OnceLock<()> = OnceLock::new();
-        static mut PAGE_PTR: *const () = std::ptr::null();
-        ONCE.get_or_init(|| {
-            let default_chunk_ptr = Self::default_chunk() as *const Chunk<T> as *mut Chunk<T>;
-            let page = Page::<T> {
-                presence_mask: 0,
-                fullness_mask: 0,
-                changed_mask: 0,
-                count: 0,
-                data: [default_chunk_ptr; 64],
-                chunk_pool: std::ptr::null_mut(),
-                pool_slot: 0,
-                pool_page: std::ptr::null_mut(),
-                owner_index: 0,
-            };
-            let p = Box::new(page);
-            let raw: *mut Page<T> = Box::into_raw(p);
-            unsafe { PAGE_PTR = raw as *const () };
-        });
-        unsafe { &*(PAGE_PTR as *const Page<T>) }
-    }
     /// Creates a new empty Storage instance.
     pub fn new() -> Self {
-        let dp = Self::default_page();
-        let default_page_ptr = dp as *const Page<T> as *mut Page<T>;
+        let default_chunk_box_tmp = Box::new(Chunk::<T>::new());
+        let default_chunk_ptr: *const Chunk<T> = Box::into_raw(default_chunk_box_tmp) as *const Chunk<T>;
+        let default_chunk_box = unsafe { Box::from_raw(default_chunk_ptr as *mut Chunk<T>) };
+        let default_page_box_tmp = Box::new(Page::<T> {
+            presence_mask: 0,
+            fullness_mask: 0,
+            changed_mask: 0,
+            count: 0,
+            data: [default_chunk_ptr as *mut Chunk<T>; 64],
+            chunk_pool: std::ptr::null_mut(),
+            pool_slot: 0,
+            pool_page: std::ptr::null_mut(),
+            owner_index: 0,
+        });
+        let default_page_ptr: *const Page<T> = Box::into_raw(default_page_box_tmp) as *const Page<T>;
+        let default_page_box = unsafe { Box::from_raw(default_page_ptr as *mut Page<T>) };
         Self {
             presence_mask: 0,
             fullness_mask: 0,
@@ -105,8 +86,12 @@ impl<T: Component> Storage<T> {
             rollback_pool: Vec::new(),
             page_pool: Pool::new(),
             chunk_pool: Pool::new(),
-            data: [default_page_ptr; 64],
+            data: [default_page_ptr as *mut Page<T>; 64],
             generation: 0, // Start at 0, will increment to 1 on first spawn (only used for Entity)
+            default_chunk_box,
+            default_page_box,
+            default_chunk_ptr,
+            default_page_ptr,
         }
     }
 
@@ -132,34 +117,24 @@ impl<T: Component> Storage<T> {
 
     /// Gets a reference to a value at the given global index.
     /// Returns None if the value doesn't exist.
+    #[inline(always)]
     pub fn get(&self, index: u32) -> Option<&T> {
-        let chunk_idx = index % 64;
-        let page_idx = (index / 64) % 64;
-        let storage_idx = index / (64 * 64);
+        let chunk_idx = (index & 63) as u32;
+        let page_idx = ((index >> 6) & 63) as u32;
+        let storage_idx = index >> 12;
 
         if storage_idx >= 64 {
             return None;
         }
 
-        if (self.presence_mask >> storage_idx) & 1 == 0 {
-            return None;
-        }
-
         unsafe {
             let page_ptr = self.data[storage_idx as usize];
-            if page_idx >= 64 {
+            let chunk_ptr = (*page_ptr).data[page_idx as usize];
+            if chunk_ptr == self.default_chunk_ptr as *mut Chunk<T> {
                 return None;
             }
-            let page_presence = std::ptr::addr_of!((*page_ptr).presence_mask).read();
-            if (page_presence >> page_idx) & 1 == 0 {
-                return None;
-            }
-            let chunk_ptr = std::ptr::addr_of!((*page_ptr).data[page_idx as usize]).read();
-            if chunk_idx >= 64 {
-                return None;
-            }
-            let chunk_presence = std::ptr::addr_of!((*chunk_ptr).presence_mask).read();
-            if (chunk_presence >> chunk_idx) & 1 == 0 {
+            let bit = 1u64 << chunk_idx;
+            if ((*chunk_ptr).presence_mask & bit) == 0 {
                 return None;
             }
             Some((*chunk_ptr).data[chunk_idx as usize].assume_init_ref())
@@ -183,6 +158,7 @@ impl<T: Component> Storage<T> {
                 storage_idx as u8,
                 &mut self.data[storage_idx as usize],
                 chunk_pool_ptr,
+                self.default_chunk_ptr,
             );
             self.presence_mask |= 1u64 << storage_idx;
             self.changed_mask |= 1u64 << storage_idx;
@@ -467,8 +443,8 @@ impl<T: Component> Storage<T> {
                 let page = &mut *self.data[storage_idx as usize];
                 // Drop owned chunk and reset pointer to default
                 self.chunk_pool.free(page.data[page_idx as usize]);
-                let dc = Storage::<T>::default_chunk();
-                page.data[page_idx as usize] = dc as *const Chunk<T> as *mut Chunk<T>;
+                let dc = self.default_chunk_ptr as *mut Chunk<T>;
+                page.data[page_idx as usize] = dc;
                 debug_assert!(
                     page.fullness_mask & !page.presence_mask == 0,
                     "Page fullness_mask invariant violated after dropping chunk"
@@ -569,8 +545,8 @@ impl<T: Component> Storage<T> {
             // Page is empty - drop it and reset pointer to default
             // Note: self.presence_mask and self.fullness_mask were already updated above
             self.page_pool.free(self.data[storage_idx as usize]);
-            let dp = Storage::<T>::default_page();
-            self.data[storage_idx as usize] = dp as *const Page<T> as *mut Page<T>;
+            let dp = self.default_page_box.as_mut() as *mut Page<T>;
+            self.data[storage_idx as usize] = dp;
             debug_assert!(
                 self.fullness_mask & !self.presence_mask == 0,
                 "Storage fullness_mask invariant violated after dropping page"
@@ -630,6 +606,7 @@ impl<T: Component> Storage<T> {
                         s as u8,
                         &mut self.data[s],
                         chunk_pool_ptr,
+                        self.default_chunk_ptr,
                     );
                     self.presence_mask |= 1u64 << s;
                 }
@@ -680,8 +657,8 @@ impl<T: Component> Storage<T> {
                                     {
                                         page.data[moved_idx as usize] = new_ptr;
                                     }
-                                    let dc = Storage::<T>::default_chunk();
-                                    page.data[p] = dc as *const Chunk<T> as *mut Chunk<T>;
+                                    let dc = self.default_chunk_ptr as *mut Chunk<T>;
+                                    page.data[p] = dc;
                                 }
                                 page.presence_mask &= !(1u64 << p);
                                 page.fullness_mask &= !(1u64 << p);
@@ -777,8 +754,8 @@ impl<T: Component> Storage<T> {
                                     {
                                         page.data[moved_idx as usize] = new_ptr;
                                     }
-                                    let dc = Storage::<T>::default_chunk();
-                                    page.data[p] = dc as *const Chunk<T> as *mut Chunk<T>;
+                                    let dc = self.default_chunk_box.as_mut() as *mut Chunk<T>;
+                                    page.data[p] = dc;
                                 }
                                 page.presence_mask &= !(1u64 << p);
                                 page.fullness_mask &= !(1u64 << p);
@@ -798,8 +775,8 @@ impl<T: Component> Storage<T> {
                         if let Some((new_ptr, moved_idx)) = self.page_pool.free_page(self.data[s]) {
                             self.data[moved_idx as usize] = new_ptr;
                         }
-                        let dp = Storage::<T>::default_page();
-                        self.data[s] = dp as *const Page<T> as *mut Page<T>;
+                        let dp = self.default_page_ptr as *mut Page<T>;
+                        self.data[s] = dp;
                     }
                     self.presence_mask &= !(1u64 << s);
                     self.fullness_mask &= !(1u64 << s);
@@ -1045,6 +1022,7 @@ impl Storage<crate::entity::Entity> {
                     storage_idx as u8,
                     &mut self.data[storage_idx],
                     chunk_pool_ptr,
+                    self.default_chunk_ptr,
                 );
                 self.presence_mask |= 1u64 << storage_idx;
                 self.changed_mask |= 1u64 << storage_idx;
@@ -1257,9 +1235,7 @@ pub struct Page<T: Component> {
 
 impl<T: Component> Page<T> {
     /// Creates a new Page.
-    pub fn new_with_pool(chunk_pool: *mut Pool<Chunk<T>>) -> Self {
-        let dc = Storage::<T>::default_chunk();
-        let default_chunk_ptr = dc as *const Chunk<T> as *mut Chunk<T>;
+    pub fn new_with_pool(chunk_pool: *mut Pool<Chunk<T>>, default_chunk_ptr: *mut Chunk<T>) -> Self {
         Self {
             presence_mask: 0,
             fullness_mask: 0,
@@ -1319,12 +1295,7 @@ impl<T: Component> Page<T> {
     }
 }
 
-impl<T: Component> Default for Page<T> {
-    fn default() -> Self {
-        // Default page has no pool; it should never be dropped via pool
-        Self::new_with_pool(std::ptr::null_mut())
-    }
-}
+// Default for Page<T> intentionally omitted; pages are constructed with a default chunk pointer
 
 impl<T: Component> Drop for Page<T> {
     fn drop(&mut self) {
