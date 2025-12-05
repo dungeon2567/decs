@@ -89,18 +89,6 @@ impl<T: Component> ComponentCleanupSystem<T> {
         }
     }
 
-    /// Creates a cleanup system from explicit storages, avoiding world aliasing.
-    pub fn from_storages(
-        t_storage: &mut Storage<T>,
-        destroyed_storage: &Storage<Destroyed>,
-    ) -> Self {
-        Self {
-            writes: [TypeId::of::<T>()],
-            t_storage: t_storage as *mut Storage<T>,
-            destroyed_storage: destroyed_storage as *const Storage<Destroyed>,
-        }
-    }
-
     /// Removes all T components from entities that have the Destroyed component.
     /// Iterates through the intersection of presence masks at each level (both T and Destroyed)
     /// and removes T components directly. Only entities that exist in both storages will be cleaned up.
@@ -206,11 +194,9 @@ impl<T: Component> ComponentCleanupSystem<T> {
                                         debug_assert!(
                                             (page_mut.presence_mask >> page_idx) & 1 != 0
                                         );
-                                        let t_storage = &mut *t_storage;
-                                        if let Some((new_ptr, moved_idx)) =
-                                            t_storage.chunk_pool.free_chunk(page_mut.data[page_idx])
-                                        {
-                                            page_mut.data[moved_idx as usize] = new_ptr;
+                                        // Drop chunk and reset to default
+                                        if page_mut.data[page_idx] != t_storage.default_chunk_ptr as *mut _ {
+                                            drop(Box::from_raw(page_mut.data[page_idx]));
                                         }
                                         let dc = t_storage.default_chunk_ptr as *mut _;
                                         page_mut.data[page_idx] = dc;
@@ -375,10 +361,9 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
                             // Drop the chunk itself
                             let _ = t_chunk;
                             debug_assert!((t_page.presence_mask >> page_idx) & 1 != 0);
-                            if let Some((new_ptr, moved_idx)) =
-                                t_storage.chunk_pool.free_chunk(t_page.data[page_idx])
-                            {
-                                t_page.data[moved_idx as usize] = new_ptr;
+                            // Drop chunk and reset to default
+                            if t_page.data[page_idx] != t_storage.default_chunk_ptr as *mut _ {
+                                drop(Box::from_raw(t_page.data[page_idx]));
                             }
                             let dc = t_storage.default_chunk_ptr as *mut _;
                             t_page.data[page_idx] = dc;
@@ -402,10 +387,8 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
 
                     // Drop the page itself and reset pointer to default
                     debug_assert!((t_storage.presence_mask >> storage_idx) & 1 != 0);
-                    if let Some((new_ptr, moved_idx)) =
-                        t_storage.page_pool.free_page(t_storage.data[storage_idx])
-                    {
-                        t_storage.data[moved_idx as usize] = new_ptr;
+                    if t_storage.data[storage_idx] != t_storage.default_page_ptr as *mut _ {
+                        drop(Box::from_raw(t_storage.data[storage_idx]));
                     }
                     let dp = t_storage.default_page_ptr as *mut _;
                     t_storage.data[storage_idx] = dp;

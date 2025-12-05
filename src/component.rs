@@ -1,6 +1,6 @@
-use std::alloc::Allocator;
 use crate::world::World;
 use decs::system::TemporaryComponentCleanupSystem;
+use std::alloc::Allocator;
 
 pub trait Component
 where

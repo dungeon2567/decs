@@ -100,7 +100,7 @@ impl<'a, T: Component + Clone> DerefMut for ViewMut<'a, T> {
         unsafe {
             let bit = 1u64 << self.index;
             // Check if this is the first change in this chunk for the current processing
-            let was_chunk_changed_before = self.chunk.changed_mask == 0;
+            let chunk_not_changed_before = self.chunk.changed_mask == 0;
             // Mark item-level change in chunk
             self.chunk.changed_mask |= bit;
 
@@ -135,7 +135,7 @@ impl<'a, T: Component + Clone> DerefMut for ViewMut<'a, T> {
             }
 
             // Set hierarchical changed masks in rollback only on first change in this chunk
-            if was_chunk_changed_before {
+            if chunk_not_changed_before {
                 rb_page.changed_mask |= 1u64 << self.page_idx;
                 storage_mut.rollback.changed_mask |= 1u64 << self.storage_idx;
             }

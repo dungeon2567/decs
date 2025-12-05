@@ -139,10 +139,13 @@ mod tests {
     #[test]
     fn none_test_10k_matches_500() {
         register_components_once();
+
         unsafe {
             COUNT_MATCHED = 0;
         }
+
         let mut world = World::new();
+        
         {
             let frame = Frame::new(world.current_tick());
             let pos_ptr = world.get_storage::<Position>();
@@ -159,9 +162,12 @@ mod tests {
                 }
             }
         }
+
         let system = FilteredMovementCount::new(&mut world);
         let frame = Frame::new(world.current_tick());
+
         system.run(&frame);
+
         let matched = unsafe { COUNT_MATCHED };
         assert_eq!(matched, 500);
     }

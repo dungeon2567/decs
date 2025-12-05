@@ -7,7 +7,6 @@ pub mod component;
 pub mod ecs;
 pub mod entity;
 pub mod frame;
-pub mod pool;
 pub mod rollback;
 pub mod scheduler;
 pub mod storage;

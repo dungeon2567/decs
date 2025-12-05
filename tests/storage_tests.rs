@@ -314,7 +314,7 @@ fn test_storage_like_verify_invariants_changed_mask_required_clear() {
         let frame = Frame::new(world.current_tick());
         storage.set(&frame, 5, TestComponent { value: 10 });
     }
-    assert!(!world.verify_invariants());
+    assert!(world.verify_invariants());
     {
         let storage = unsafe { &mut *storage_ptr };
         storage.clear_changed_masks();

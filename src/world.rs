@@ -14,6 +14,7 @@ decs_macros::system_group!(DestroyGroup { After=[CleanupGroup] });
 pub struct World {
     storage_mask: [u64; 4],
     storage_ptrs: [Option<Box<dyn StorageLike>>; 256],
+    storage_raw_ptrs: [*mut (); 256],
     current_tick: Tick,
     scheduler: Scheduler,
 }
@@ -24,6 +25,7 @@ impl World {
         let mut world = Self {
             storage_mask: [0; 4],
             storage_ptrs: [const { None }; 256],
+            storage_raw_ptrs: [std::ptr::null_mut(); 256],
             current_tick: Tick(0),
             scheduler: Scheduler::new(),
         };
@@ -76,22 +78,18 @@ impl World {
         let bit = id % 64;
         let present = (self.storage_mask[seg] >> bit) & 1 != 0;
 
-        if !present || self.storage_ptrs[index].is_none() {
+        if !present {
             let storage_box: Box<Storage<T>> = Box::new(Storage::<T>::new());
+            let raw = Box::into_raw(storage_box);
             self.storage_mask[seg] |= 1u64 << bit;
-            let trait_box: Box<dyn StorageLike> = storage_box;
+            let trait_box: Box<dyn StorageLike> = unsafe { Box::from_raw(raw) };
             self.storage_ptrs[index] = Some(trait_box);
+            self.storage_raw_ptrs[index] = raw as *mut ();
 
             T::schedule_cleanup_system(self);
         }
 
-        if let Some(ref mut boxed) = self.storage_ptrs[index] {
-            let any = boxed.as_any_mut();
-            let storage: &mut Storage<T> = any.downcast_mut::<Storage<T>>().expect("storage type mismatch");
-            storage as *mut Storage<T>
-        } else {
-            unreachable!()
-        }
+        self.storage_raw_ptrs[index] as *mut Storage<T>
     }
 
     /// Returns a mutable reference to the storage for component type T.
@@ -139,16 +137,19 @@ impl Drop for World {
         for seg in 0..4 {
             let base = seg * 64;
             let mut remaining_mask = self.storage_mask[seg];
+
             while remaining_mask != 0 {
                 let start = remaining_mask.trailing_zeros() as usize;
                 let shifted = remaining_mask >> start;
                 let run_len = shifted.trailing_ones() as usize;
+
                 for i in start..start + run_len {
                     let idx = base + i;
                     if let Some(boxed) = self.storage_ptrs[idx].take() {
                         drop(boxed);
                     }
                 }
+
                 remaining_mask &= !((1u64 << run_len) - 1) << start;
             }
         }
