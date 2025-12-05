@@ -127,6 +127,41 @@ impl World {
 
         true
     }
+
+    /// Rolls back all component storages to the specified tick.
+    /// This iterates through all active storages and calls their rollback method.
+    /// After rolling back all storages, sets the world tick to target_tick.
+    ///
+    /// # Note
+    /// Only works for components that implement Clone (required by Storage::rollback).
+    /// The world tick is updated to target_tick after all rollbacks complete.
+    pub fn rollback(&mut self, target_tick: Tick) {
+        // Iterate through all storage segments
+        for seg in 0..4 {
+            let base = seg * 64;
+            let mut remaining_mask = self.storage_mask[seg];
+            
+            while remaining_mask != 0 {
+                let start = remaining_mask.trailing_zeros() as usize;
+                let shifted = remaining_mask >> start;
+                let run_len = shifted.trailing_ones() as usize;
+                
+                for i in start..start + run_len {
+                    let idx = base + i;
+                    
+                    // Call rollback through StorageLike trait
+                    if let Some(ref mut storage) = self.storage_ptrs[idx] {
+                        storage.rollback(target_tick);
+                    }
+                }
+                
+                remaining_mask &= !((1u64 << run_len) - 1) << start;
+            }
+        }
+        
+        // Update world tick to target_tick
+        self.set_tick(target_tick);
+    }
 }
 
 impl Drop for World {

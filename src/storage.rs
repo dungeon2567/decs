@@ -11,6 +11,10 @@ pub trait StorageLike: Any {
     /// Returns true if all invariants are satisfied, false otherwise.
     fn verify_invariants(&self) -> bool;
 
+    /// Rolls back this storage to the specified tick.
+    /// This is a type-erased method that internally calls Storage<T>::rollback.
+    fn rollback(&mut self, target_tick: Tick);
+
     /// Returns a reference to the underlying Any trait object for downcasting.
     fn as_any(&self) -> &dyn Any;
 
@@ -549,6 +553,22 @@ impl<T: Component> Storage<T> {
         // Efficient rollback using bitmasks to track visited indices.
         // This ensures at most 1 clone and 1 drop per index without HashMap/Vec allocations.
         
+        // Find the generation value at or before target_tick
+        let mut found_generation = None;
+        
+        // Search from newest to oldest in self.prev (reversed)
+        for rb in self.prev.iter().rev() {
+            if rb.tick() <= target_tick {
+                found_generation = Some(rb.get_saved_generation());
+                break;
+            }
+        }
+        
+        // If not found in prev, check if current rollback is at or before target_tick
+        if found_generation.is_none() && self.rollback.tick() <= target_tick {
+            found_generation = Some(self.rollback.get_saved_generation());
+        }
+        
         // Build unified storage-level changed_mask (OR of all rollback states > target_tick)
         let mut unified_storage_mask = 0u64;
         for rb in self.prev.iter() {
@@ -736,35 +756,94 @@ impl<T: Component> Storage<T> {
             }
         }
         
-        // Recalculate all masks after rollback
-        self.recalculate_masks();
+        // Restore generation if found in rollback history
+        if let Some(generation_value) = found_generation {
+            self.generation = generation_value;
+        }
+        
+        // Recalculate all masks and drop empty chunks/pages after rollback
+        self.recalculate_masks_and_cleanup();
         self.clear_changed_masks();
+        
+        // Truncate rollback history: remove all states > target_tick
+        while !self.prev.is_empty() {
+            if let Some(back) = self.prev.back() {
+                if back.tick() > target_tick {
+                    if let Some(mut old_rb) = self.prev.pop_back() {
+                        // Return to pool for reuse
+                        old_rb.reset_for_tick(Tick(0));
+                        self.rollback_pool.push(old_rb);
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
     }
 
-    fn recalculate_masks(&mut self) {
-        // Recalculate storage-level masks from pages
+
+    fn recalculate_masks_and_cleanup(&mut self) {
+        // Recalculate storage-level masks from pages and drop empty structures
+        self.presence_mask = 0;
         self.fullness_mask = 0;
+        
         for i in 0..64 {
-            if (self.presence_mask >> i) & 1 != 0 {
-                let page = unsafe { &mut *self.data[i] };
+            let page_ptr = self.data[i];
+            
+            // Skip default page pointer
+            if std::ptr::eq(page_ptr, self.default_page_ptr) {
+                continue;
+            }
+            
+            let page = unsafe { &mut *page_ptr };
+            
+            // Recalculate page masks from chunks and drop empty chunks
+            page.presence_mask = 0;
+            page.fullness_mask = 0;
+            
+            for j in 0..64 {
+                let chunk_ptr = page.data[j];
                 
-                // Recalculate page fullness from chunks
-                page.fullness_mask = 0;
-                for j in 0..64 {
-                    if (page.presence_mask >> j) & 1 != 0 {
-                        let chunk = unsafe { &*page.data[j] };
-                        if chunk.presence_mask == u64::MAX {
-                            page.fullness_mask |= 1u64 << j;
-                        }
-                    }
+                // Skip default chunk pointer
+                if std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
+                    continue;
                 }
                 
+                let chunk = unsafe { &*chunk_ptr };
+                
+                // If chunk is empty, drop it and reset to default
+                if chunk.presence_mask == 0 {
+                    unsafe {
+                        drop(Box::from_raw(chunk_ptr));
+                    }
+                    page.data[j] = self.default_chunk_ptr as *mut Chunk<T>;
+                } else {
+                    // Chunk has data, update page masks
+                    page.presence_mask |= 1u64 << j;
+                    if chunk.presence_mask == u64::MAX {
+                        page.fullness_mask |= 1u64 << j;
+                    }
+                }
+            }
+            
+            // If page is empty, drop it and reset to default
+            if page.presence_mask == 0 {
+                unsafe {
+                    drop(Box::from_raw(page_ptr));
+                }
+                self.data[i] = self.default_page_ptr as *mut Page<T>;
+            } else {
+                // Page has data, update storage masks
+                self.presence_mask |= 1u64 << i;
                 if page.count == 64 * 64 {
                     self.fullness_mask |= 1u64 << i;
                 }
             }
         }
     }
+
 
 
     /// Clears the changed_mask at all levels (Storage, Page, and Chunk).
@@ -838,6 +917,10 @@ impl<T: Component> Storage<T> {
 impl<T: Component> StorageLike for Storage<T> {
     fn verify_invariants(&self) -> bool {
         Storage::verify_invariants(self)
+    }
+
+    fn rollback(&mut self, target_tick: Tick) {
+        Storage::rollback(self, target_tick)
     }
 
     fn as_any(&self) -> &dyn Any {

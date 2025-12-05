@@ -27,13 +27,18 @@ Storage<T>
 ├── changed_mask: u64     // Tracks which pages have changes
 ├── count: u32            // Total number of values stored
 ├── rollback: Box<RollbackStorage<T>>
-└── data: [MaybeUninit<Box<Page<T>>>; 64]
+├── prev: VecQueue<Box<RollbackStorage<T>>>  // Rollback history (max 64 ticks)
+├── rollback_pool: Vec<Box<RollbackStorage<T>>>  // Pool of recycled rollback instances
+├── generation: u64       // Global generation counter (Entity only)
+├── default_chunk_ptr: *const Chunk<T>  // Shared default chunk pointer
+├── default_page_ptr: *const Page<T>    // Shared default page pointer
+└── data: [*mut Page<T>; 64]
     └── Page<T>
         ├── presence_mask: u64
         ├── fullness_mask: u64
         ├── changed_mask: u64
         ├── count: u32
-        └── data: [MaybeUninit<Box<Chunk<T>>>; 64]
+        └── data: [*mut Chunk<T>; 64]
             └── Chunk<T>
                 ├── presence_mask: u64
                 ├── fullness_mask: u64

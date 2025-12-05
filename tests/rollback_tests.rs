@@ -401,6 +401,7 @@ fn test_rollback_pages_chunks_5k_min_ops() {
     for id in 0..(n + 1000) {
         let c = clone_counts[&id].load(Ordering::SeqCst);
         let d = drop_counts[&id].load(Ordering::SeqCst);
+
         assert!(c <= 1, "index {} clone count {} exceeds 1", id, c);
         assert!(d <= 1, "index {} drop count {} exceeds 1", id, d);
     }
