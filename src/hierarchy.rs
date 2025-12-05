@@ -4,7 +4,7 @@ use std::any::TypeId;
 
 use crate::storage::Storage;
 use crate::system::{System, SystemGroup};
-use crate::world::{CleanupGroup, HierarchyGroup, World};
+use crate::world::{HierarchyGroup, World};
 
 #[derive(Debug, Component, Clone, PartialEq, Eq, Hash)]
 pub struct Parent {

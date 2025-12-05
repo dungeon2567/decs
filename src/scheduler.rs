@@ -59,11 +59,41 @@ impl Scheduler {
             index_by_type.entry(*ty).or_default().push(idx);
         }
 
+        // Precompute reads/writes per system for conflict checks
+        let mut sys_reads: Vec<HashSet<TypeId>> = vec![HashSet::new(); n];
+        let mut sys_writes: Vec<HashSet<TypeId>> = vec![HashSet::new(); n];
+        for (i, system) in self.systems.iter().enumerate() {
+            for &t in system.reads() {
+                sys_reads[i].insert(t);
+            }
+            for &t in system.writes() {
+                sys_writes[i].insert(t);
+            }
+        }
+
+        // Helper to determine if two systems have a write-write or read-write conflict
+        let has_conflict = |a: usize, b: usize| -> bool {
+            // write-write
+            if sys_writes[a].iter().any(|t| sys_writes[b].contains(t)) {
+                return true;
+            }
+            // a writes, b reads
+            if sys_writes[a].iter().any(|t| sys_reads[b].contains(t)) {
+                return true;
+            }
+            // b writes, a reads
+            if sys_writes[b].iter().any(|t| sys_reads[a].contains(t)) {
+                return true;
+            }
+            false
+        };
+
+        // Add system-level before/after edges only when there is a conflict
         for (i, system) in self.systems.iter().enumerate() {
             for before_type in system.before() {
                 if let Some(indices) = index_by_type.get(before_type) {
                     for &j in indices {
-                        if i != j {
+                        if i != j && has_conflict(i, j) {
                             graph.add_edge(i, j);
                         }
                     }
@@ -72,7 +102,7 @@ impl Scheduler {
             for after_type in system.after() {
                 if let Some(indices) = index_by_type.get(after_type) {
                     for &j in indices {
-                        if i != j {
+                        if i != j && has_conflict(j, i) {
                             graph.add_edge(j, i);
                         }
                     }
@@ -115,7 +145,7 @@ impl Scheduler {
                 for before_type in group.before() {
                     if let Some(targets) = systems_by_group.get(before_type) {
                         for &j in targets {
-                            if i != j {
+                            if i != j && has_conflict(i, j) {
                                 graph.add_edge(i, j);
                                 constrained_edges.insert((i, j));
                             }
@@ -125,7 +155,7 @@ impl Scheduler {
                 for after_type in group.after() {
                     if let Some(sources) = systems_by_group.get(after_type) {
                         for &j in sources {
-                            if i != j {
+                            if i != j && has_conflict(j, i) {
                                 graph.add_edge(j, i);
                                 constrained_edges.insert((j, i));
                             }
