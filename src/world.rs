@@ -7,7 +7,8 @@ use crate::storage::{Storage, StorageLike};
 use crate::tick::Tick;
 
 decs_macros::system_group!(SimulationGroup { Before=[CleanupGroup] });
-decs_macros::system_group!(CleanupGroup { After=[SimulationGroup] });
+decs_macros::system_group!(HierarchyGroup { After=[SimulationGroup] });
+decs_macros::system_group!(CleanupGroup { After=[HierarchyGroup] });
 decs_macros::system_group!(DestroyGroup { After=[CleanupGroup] });
 
 pub struct World {
@@ -59,6 +60,8 @@ impl World {
         self.current_tick = Tick(self.current_tick.0.wrapping_add(1));
         let frame = Frame::new(self.current_tick());
         self.scheduler.run(&frame);
+
+        
 
         for seg in 0..4 {
             let base = seg * 64;

@@ -564,7 +564,7 @@ impl<T: Component> Storage<T> {
         // Search from newest to oldest: self.rollback -> self.prev.iter().rev()
         let mut found_generation = None;
         let all_rollbacks_rev = std::iter::once(&self.rollback).chain(self.prev.iter().rev());
-        
+
         // We can stop searching once we find a tick <= target_tick
         for rb in all_rollbacks_rev {
             if rb.tick() <= target_tick {
@@ -619,7 +619,9 @@ impl<T: Component> Storage<T> {
                 // Process rollback states from oldest to newest (self.prev is ordered oldest to newest)
                 // Optimization: skip ticks <= target_tick used skip_while
                 // Note: We MUST iterate Oldest -> Newest for correct "first modification" restoration logic
-                let relevant_rollbacks = self.prev.iter()
+                let relevant_rollbacks = self
+                    .prev
+                    .iter()
                     .chain(std::iter::once(&self.rollback))
                     .skip_while(|rb| rb.tick() <= target_tick);
 
@@ -933,6 +935,170 @@ impl Storage<crate::entity::Entity> {
         }
 
         None // Storage is full
+    }
+}
+
+impl Storage<crate::hierarchy::ChildOf> {
+    pub fn set_parent(
+        &mut self,
+        frame: &crate::frame::Frame,
+        child_index: u32,
+        parent: crate::entity::Entity,
+    ) {
+        self.set_pending_parent_fast(frame, child_index, parent);
+    }
+
+    pub fn apply_pending_parent_changes(&mut self, frame: &crate::frame::Frame) {
+        let mut storage_mask = self.presence_mask;
+        while storage_mask != 0 {
+            let storage_start = storage_mask.trailing_zeros() as usize;
+            let storage_shifted = storage_mask >> storage_start;
+            let storage_run_len = storage_shifted.trailing_ones() as usize;
+            for storage_idx in storage_start..storage_start + storage_run_len {
+                let page = unsafe { &*self.data[storage_idx] };
+                let mut page_mask = page.presence_mask;
+                while page_mask != 0 {
+                    let page_start = page_mask.trailing_zeros() as usize;
+                    let page_shifted = page_mask >> page_start;
+                    let page_run_len = page_shifted.trailing_ones() as usize;
+                    for page_idx in page_start..page_start + page_run_len {
+                        let chunk = unsafe { &*page.data[page_idx] };
+                        let mut chunk_mask = chunk.presence_mask;
+                        while chunk_mask != 0 {
+                            let chunk_start = chunk_mask.trailing_zeros() as usize;
+                            let chunk_shifted = chunk_mask >> chunk_start;
+                            let chunk_run_len = chunk_shifted.trailing_ones() as usize;
+                            for chunk_idx in chunk_start..chunk_start + chunk_run_len {
+                                let global_index =
+                                    (storage_idx * 64 * 64 + page_idx * 64 + chunk_idx) as u32;
+                                let current = unsafe {
+                                    (&*page.data[page_idx]).data[chunk_idx]
+                                        .assume_init_ref()
+                                        .clone()
+                                };
+                                if let Some(p) = current.pending_parent {
+                                    let mut updated = current;
+                                    updated.parent = Some(p);
+                                    updated.pending_parent = None;
+                                    self.set(frame, global_index, updated);
+                                }
+                            }
+                            chunk_mask &= !(((1u64 << chunk_run_len) - 1) << chunk_start);
+                        }
+                    }
+                    page_mask &= !(((1u64 << page_run_len) - 1) << page_start);
+                }
+            }
+            storage_mask &= !(((1u64 << storage_run_len) - 1) << storage_start);
+        }
+    }
+
+    pub fn set_pending_parent_fast(
+        &mut self,
+        frame: &crate::frame::Frame,
+        index: u32,
+        parent: crate::entity::Entity,
+    ) {
+        let chunk_idx = index & 63;
+        let page_idx = (index >> 6) & 63;
+        let storage_idx = index >> 12;
+
+        assert!(storage_idx < 64, "Storage index out of range");
+
+        let bit = 1u64 << chunk_idx;
+
+        let page_was_new = (self.presence_mask >> storage_idx) & 1 == 0;
+        if page_was_new {
+            let new_page = Box::new(Page::new(self.default_chunk_ptr));
+            self.data[storage_idx as usize] = Box::into_raw(new_page);
+            self.presence_mask |= 1u64 << storage_idx;
+            self.changed_mask |= 1u64 << storage_idx;
+        }
+
+        let page = unsafe { &mut *self.data[storage_idx as usize] };
+        let chunk_was_new = (page.presence_mask >> page_idx) & 1 == 0;
+        if chunk_was_new {
+            let new_chunk = Box::new(Chunk::new());
+            page.data[page_idx as usize] = Box::into_raw(new_chunk);
+            page.presence_mask |= 1u64 << page_idx;
+            page.changed_mask |= 1u64 << page_idx;
+        }
+
+        let chunk = unsafe { &mut *page.data[page_idx as usize] };
+        let was_present = (chunk.presence_mask & bit) != 0;
+
+        // ensure rollback tick before writing
+        self.ensure_rollback_tick(frame.current_tick);
+        let rb_page = self.rollback.get_or_create_page(storage_idx);
+        let rb_chunk = rb_page.get_or_create_chunk(page_idx);
+
+        if was_present {
+            // store old value once
+            if (rb_chunk.changed_mask & bit) == 0 && (rb_chunk.removed_mask & bit) == 0 {
+                let old_val = unsafe { chunk.data[chunk_idx as usize].assume_init_ref().clone() };
+                rb_chunk.data[chunk_idx as usize].write(old_val);
+            }
+            rb_chunk.created_mask &= !bit;
+            rb_chunk.removed_mask &= !bit;
+            rb_chunk.changed_mask |= bit;
+
+            // mark hierarchy on first change in this chunk
+            if chunk.changed_mask == 0 {
+                rb_page.changed_mask |= 1u64 << page_idx;
+                self.rollback.changed_mask |= 1u64 << storage_idx;
+            }
+
+            // mutate in place
+            let v_mut = unsafe { chunk.data[chunk_idx as usize].assume_init_mut() };
+            v_mut.pending_parent = Some(parent);
+
+            chunk.changed_mask |= bit;
+        } else {
+            // create new value
+            let v = crate::hierarchy::ChildOf {
+                parent: None,
+                next_sibling: None,
+                prev_sibling: None,
+                pending_parent: Some(parent),
+            };
+            chunk.data[chunk_idx as usize].write(v);
+            chunk.presence_mask |= bit;
+            chunk.fullness_mask |= bit;
+            chunk.changed_mask |= bit;
+
+            page.count = page.count.saturating_add(1);
+            self.count = self.count.saturating_add(1);
+
+            // rollback mark as created
+            rb_chunk.removed_mask &= !bit;
+            rb_chunk.changed_mask &= !bit;
+            rb_chunk.created_mask |= bit;
+            rb_page.changed_mask |= 1u64 << page_idx;
+            self.rollback.changed_mask |= 1u64 << storage_idx;
+        }
+
+        // update page and storage masks
+        if !chunk_was_new {
+            page.presence_mask |= 1u64 << page_idx;
+        }
+        if chunk.presence_mask == u64::MAX {
+            page.fullness_mask |= 1u64 << page_idx;
+        } else {
+            page.fullness_mask &= !(1u64 << page_idx);
+        }
+        page.fullness_mask &= page.presence_mask;
+        page.changed_mask |= 1u64 << page_idx;
+
+        if !page_was_new {
+            self.presence_mask |= 1u64 << storage_idx;
+        }
+        if page.count == 64 * 64 {
+            self.fullness_mask |= 1u64 << storage_idx;
+        } else {
+            self.fullness_mask &= !(1u64 << storage_idx);
+        }
+        self.fullness_mask &= self.presence_mask;
+        self.changed_mask |= 1u64 << storage_idx;
     }
 }
 
