@@ -624,7 +624,7 @@ impl<T: Component> Storage<T> {
                                 let unvisited = combined_mask & !visited_mask;
                                 
                                 let mut m = unvisited;
-                                
+
                                 while m != 0 {
                                     let chunk_idx = m.trailing_zeros();
                                     m &= !(1u64 << chunk_idx);
@@ -651,6 +651,17 @@ impl<T: Component> Storage<T> {
                                                     chunk.fullness_mask &= !(1u64 << chunk_idx);
                                                     page.count = page.count.saturating_sub(1);
                                                     self.count = self.count.saturating_sub(1);
+                                                    // chunk cannot be full after removal
+                                                    page.fullness_mask &= !(1u64 << page_idx);
+                                                    // drop chunk if it became empty
+                                                    if chunk.presence_mask == 0 {
+                                                        let chunk_ptr = page.data[page_idx_usize];
+                                                        if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
+                                                            unsafe { drop(Box::from_raw(chunk_ptr)); }
+                                                        }
+                                                        page.data[page_idx_usize] = self.default_chunk_ptr as *mut Chunk<T>;
+                                                        page.presence_mask &= !(1u64 << page_idx);
+                                                    }
                                                 }
                                             }
                                         }
@@ -686,6 +697,12 @@ impl<T: Component> Storage<T> {
                                         chunk.data[chunk_idx_usize].write(old_value);
                                         chunk.presence_mask |= 1u64 << chunk_idx;
                                         chunk.fullness_mask |= 1u64 << chunk_idx;
+                                        // update page fullness bit for this chunk
+                                        if chunk.presence_mask == u64::MAX {
+                                            page.fullness_mask |= 1u64 << page_idx;
+                                        } else {
+                                            page.fullness_mask &= !(1u64 << page_idx);
+                                        }
                                     }
                                 }
                             }
@@ -722,6 +739,17 @@ impl<T: Component> Storage<T> {
                                                 chunk.fullness_mask &= !(1u64 << chunk_idx);
                                                 page.count = page.count.saturating_sub(1);
                                                 self.count = self.count.saturating_sub(1);
+                                                // chunk cannot be full after removal
+                                                page.fullness_mask &= !(1u64 << page_idx);
+                                                // drop chunk if it became empty
+                                                if chunk.presence_mask == 0 {
+                                                    let chunk_ptr = page.data[page_idx_usize];
+                                                    if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
+                                                        unsafe { drop(Box::from_raw(chunk_ptr)); }
+                                                    }
+                                                    page.data[page_idx_usize] = self.default_chunk_ptr as *mut Chunk<T>;
+                                                    page.presence_mask &= !(1u64 << page_idx);
+                                                }
                                             }
                                         }
                                     }
@@ -757,9 +785,39 @@ impl<T: Component> Storage<T> {
                                     chunk.data[chunk_idx_usize].write(old_value);
                                     chunk.presence_mask |= 1u64 << chunk_idx;
                                     chunk.fullness_mask |= 1u64 << chunk_idx;
+                                    // update page fullness bit for this chunk
+                                    if chunk.presence_mask == u64::MAX {
+                                        page.fullness_mask |= 1u64 << page_idx;
+                                    } else {
+                                        page.fullness_mask &= !(1u64 << page_idx);
+                                    }
                                 }
                             }
                         }
+                // finalize page-level masks and possibly drop empty page
+                {
+                    let storage_idx_usize = storage_idx as usize;
+                    let page_ptr = self.data[storage_idx_usize];
+                    if !std::ptr::eq(page_ptr, self.default_page_ptr) {
+                        let page = unsafe { &mut *page_ptr };
+                        // keep invariant: page.fullness_mask subset of presence
+                        page.fullness_mask &= page.presence_mask;
+                        if page.presence_mask == 0 {
+                            unsafe { drop(Box::from_raw(page_ptr)); }
+                            self.data[storage_idx_usize] = self.default_page_ptr as *mut Page<T>;
+                            self.presence_mask &= !(1u64 << storage_idx);
+                            self.fullness_mask &= !(1u64 << storage_idx);
+                        } else {
+                            self.presence_mask |= 1u64 << storage_idx;
+                            if page.count == 64 * 64 {
+                                self.fullness_mask |= 1u64 << storage_idx;
+                            } else {
+                                self.fullness_mask &= !(1u64 << storage_idx);
+                            }
+                            self.fullness_mask &= self.presence_mask;
+                        }
+                    }
+                }
             }
         }
         
@@ -767,74 +825,11 @@ impl<T: Component> Storage<T> {
         if let Some(generation_value) = found_generation {
             self.generation = generation_value;
         }
-        
-        // Recalculate all masks and drop empty chunks/pages after rollback
-        self.recalculate_masks_and_cleanup();
-        self.clear_changed_masks();
-        
-        
+        self.clear_changed_masks();    
     }
 
 
-    fn recalculate_masks_and_cleanup(&mut self) {
-        // Recalculate storage-level masks from pages and drop empty structures
-        self.presence_mask = 0;
-        self.fullness_mask = 0;
-        
-        for i in 0..64 {
-            let page_ptr = self.data[i];
-            
-            // Skip default page pointer
-            if std::ptr::eq(page_ptr, self.default_page_ptr) {
-                continue;
-            }
-            
-            let page = unsafe { &mut *page_ptr };
-            
-            // Recalculate page masks from chunks and drop empty chunks
-            page.presence_mask = 0;
-            page.fullness_mask = 0;
-            
-            for j in 0..64 {
-                let chunk_ptr = page.data[j];
-                
-                // Skip default chunk pointer
-                if std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
-                    continue;
-                }
-                
-                let chunk = unsafe { &*chunk_ptr };
-                
-                // If chunk is empty, drop it and reset to default
-                if chunk.presence_mask == 0 {
-                    unsafe {
-                        drop(Box::from_raw(chunk_ptr));
-                    }
-                    page.data[j] = self.default_chunk_ptr as *mut Chunk<T>;
-                } else {
-                    // Chunk has data, update page masks
-                    page.presence_mask |= 1u64 << j;
-                    if chunk.presence_mask == u64::MAX {
-                        page.fullness_mask |= 1u64 << j;
-                    }
-                }
-            }
-            
-            // If page is empty, drop it and reset to default
-            if page.presence_mask == 0 {
-                unsafe {
-                    drop(Box::from_raw(page_ptr));
-                }
-                self.data[i] = self.default_page_ptr as *mut Page<T>;
-            } else {
-                // Page has data, update storage masks
-                self.presence_mask |= 1u64 << i;
-                if page.count == 64 * 64 {
-                    self.fullness_mask |= 1u64 << i;
-                }
-            }
-        }
-    }
+    
 
 
 

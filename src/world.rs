@@ -6,8 +6,7 @@ use crate::scheduler::Scheduler;
 use crate::storage::{Storage, StorageLike};
 use crate::tick::Tick;
 
-decs_macros::system_group!(InitializationGroup {});
-decs_macros::system_group!(SimulationGroup { After=[InitializationGroup] });
+decs_macros::system_group!(SimulationGroup { Before=[CleanupGroup] });
 decs_macros::system_group!(CleanupGroup { After=[SimulationGroup] });
 decs_macros::system_group!(DestroyGroup { After=[CleanupGroup] });
 
@@ -161,6 +160,7 @@ impl World {
         
         // Update world tick to target_tick
         self.set_tick(target_tick);
+        debug_assert!(self.verify_invariants(), "World invariants violated after rollback");
     }
 }
 

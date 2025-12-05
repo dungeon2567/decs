@@ -23,6 +23,7 @@ struct SystemInput {
     none_types: Vec<Type>,
     all_types: Vec<Type>,
     changed_types: Vec<Type>,
+    parent_type: Option<Type>,
 }
 
 impl Parse for SystemInput {
@@ -40,6 +41,7 @@ impl Parse for SystemInput {
         let mut none_types = Vec::new();
         let mut all_types = Vec::new();
         let mut changed_types = Vec::new();
+        let mut parent_type: Option<Type> = None;
         while !content.is_empty() {
             let kw: Ident = content.parse()?;
             if kw == "None" {
@@ -75,10 +77,26 @@ impl Parse for SystemInput {
                         let _comma: syn::Token![,] = inner.parse()?;
                     }
                 }
+            } else if kw == "Parent" || kw == "Group" {
+                let _: token::Eq = content.parse()?;
+                let inner;
+                let _bracket = syn::bracketed!(inner in content);
+                // Accept first type in bracket list as parent group
+                if !inner.is_empty() {
+                    let ty: Type = inner.parse()?;
+                    parent_type = Some(ty);
+                    // Consume remaining comma-separated types if present
+                    while inner.peek(syn::Token![,]) {
+                        let _comma: syn::Token![,] = inner.parse()?;
+                        // ignore extra entries
+                        if inner.is_empty() { break; }
+                        let _ = inner.parse::<Type>();
+                    }
+                }
             } else {
                 return Err(syn::Error::new_spanned(
                     kw,
-                    "Expected None=[...], All=[...], or Changed=[...]",
+                    "Expected None=[...], All=[...], Changed=[...], Parent=[...], or Group=[...]",
                 )
                 .into());
             }
@@ -94,6 +112,7 @@ impl Parse for SystemInput {
             none_types,
             all_types,
             changed_types,
+            parent_type,
         })
     }
 }
@@ -148,6 +167,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         none_types,
         all_types,
         changed_types,
+        parent_type,
         ..
     } = parse_macro_input!(input as SystemInput);
 
@@ -499,6 +519,16 @@ pub fn system(input: TokenStream) -> TokenStream {
 
     // Generate storage refresh sequences
 
+    let parent_impl = if let Some(pt) = parent_type {
+        quote! {
+            fn parent(&self) -> Option<&dyn decs::system::SystemGroup> {
+                Some(<#pt as decs::system::SystemGroup>::instance())
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let expanded = quote! {
         pub struct #system_name {
             #(#struct_fields,)*
@@ -528,66 +558,45 @@ pub fn system(input: TokenStream) -> TokenStream {
                 unsafe {
                     let mut storage_mask = #mask_intersection & !#none_full_pages_or;
                     while storage_mask != 0 {
-                        let storage_start = storage_mask.trailing_zeros() as usize;
-                        let shifted = storage_mask >> storage_start;
-                        let storage_run_len = shifted.trailing_ones() as usize;
+                        let storage_idx = storage_mask.trailing_zeros() as usize;
+                        #(#page_refs_init)*
+                        let mut page_mask = page_0.presence_mask;
+                        #(#page_mask_intersections)*
+                        let mut none_chunk_full_or: u64 = 0u64;
+                        #(#none_chunk_full_or_inits)*
+                        page_mask &= !none_chunk_full_or;
 
-                        for storage_idx in storage_start..storage_start + storage_run_len {
-                            #(#page_refs_init)*
-                            let mut page_mask = page_0.presence_mask;
-                            #(#page_mask_intersections)*
-                            #(#page_changed_intersections)*
-                            let mut none_chunk_full_or: u64 = 0u64;
-                            #(#none_chunk_full_or_inits)*
-                            page_mask &= !none_chunk_full_or;
+                        let mut page_mask_iter = page_mask;
+                        while page_mask_iter != 0 {
+                            let page_idx = page_mask_iter.trailing_zeros() as usize;
+                            #(#chunk_refs_init)*
+                            let mut item_mask = {
+                                let mut m = {
+                                    #[allow(unused_unsafe)]
+                                    unsafe { (&*chunk_0).presence_mask }
+                                };
+                                #(#item_mask_intersections)*
+                                #(#item_changed_intersections)*
+                                m
+                            };
+                            let mut none_item_presence_or: u64 = 0u64;
+                            #(#none_item_presence_or_inits)*
+                            item_mask &= !none_item_presence_or;
 
-
-                            let mut page_mask_iter = page_mask;
-                            while page_mask_iter != 0 {
-                                let page_start = page_mask_iter.trailing_zeros() as usize;
-                                let page_shifted = page_mask_iter >> page_start;
-                                let page_run_len = page_shifted.trailing_ones() as usize;
-
-                                for page_idx in page_start..page_start + page_run_len {
-                                    #(#chunk_refs_init)*
-                                    let mut item_mask = {
-                                        let mut m = {
-                                            // First chunk may be a raw pointer or &mut
-                                            // Use pointer read for uniform behavior
-                                            #[allow(unused_unsafe)]
-                                            unsafe { (&*chunk_0).presence_mask }
-                                        };
-                                        #(#item_mask_intersections)*
-                                        #(#item_changed_intersections)*
-                                        m
-                                    };
-                                    let mut none_item_presence_or: u64 = 0u64;
-                                    #(#none_item_presence_or_inits)*
-                                    item_mask &= !none_item_presence_or;
-
-
-                                    let mut item_mask_iter = item_mask;
-                                    while item_mask_iter != 0 {
-                                        let item_start = item_mask_iter.trailing_zeros() as usize;
-                                        let item_shifted = item_mask_iter >> item_start;
-                                        let item_run_len = item_shifted.trailing_ones() as usize;
-
-                                        for chunk_item_idx in item_start..item_start + item_run_len {
-                                            #(#param_gathering)*
-                                            #system_name::#query_fn_name(#(#call_args),*);
-                                            #(#propagate_changes)*
-                                        }
-                                        item_mask_iter &= !((u64::MAX >> (64 - item_run_len)) << item_start);
-                                    }
-
-                                }
-                                page_mask_iter &= !((u64::MAX >> (64 - page_run_len)) << page_start);
+                            let mut item_mask_iter = item_mask;
+                            while item_mask_iter != 0 {
+                                let chunk_item_idx = item_mask_iter.trailing_zeros() as usize;
+                                #(#param_gathering)*
+                                #system_name::#query_fn_name(#(#call_args),*);
+                                #(#propagate_changes)*
+                                item_mask_iter &= item_mask_iter - 1;
                             }
 
+                            page_mask_iter &= page_mask_iter - 1;
                         }
-                        storage_mask &= !((u64::MAX >> (64 - storage_run_len)) << storage_start);
-                    }
 
+                        storage_mask &= storage_mask - 1;
+                    }
                 }
             }
 
@@ -606,6 +615,7 @@ pub fn system(input: TokenStream) -> TokenStream {
             }
 
             fn debug_counts(&self) -> (usize, usize) { (0, 0) }
+            #parent_impl
         }
     };
 

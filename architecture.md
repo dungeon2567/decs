@@ -331,6 +331,13 @@ Because `ViewMut` does not propagate invariants up the hierarchy, the **System**
 - It does not run for temporary components (e.g., `Destroyed`).
 - For `Destroyed`, `TemporaryComponentCleanupSystem` runs and fully cleans its storage (drops components, chunks, and pages), leaving masks and counts reset.
 
+### World Run Postconditions
+
+- After `world.run()`, cleanup systems execute: `ComponentCleanupSystem<T>` for non-temporary components and `TemporaryComponentCleanupSystem` for temporary ones.
+- All `changed_mask` values are cleared at Chunk, Page, and Storage levels for processed components.
+- Temporary components (such as `Destroyed`) are fully removed; their storages are cleaned, and masks and counts are reset.
+- Storage invariants are maintained; `verify_invariants()` should pass following cleanup.
+
 ---
 
 ## Memory Safety

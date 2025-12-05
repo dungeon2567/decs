@@ -1,7 +1,7 @@
 use crate::frame::Frame;
 use crate::system::System;
 use std::any::TypeId;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A scheduler that manages system execution order based on dependencies.
 /// Supports hierarchical system groups similar to Unity DOTS ECS.
@@ -91,48 +91,70 @@ impl Scheduler {
             }
         }
 
+        // Build group membership maps
+        let mut systems_by_group: HashMap<TypeId, Vec<usize>> = HashMap::new();
+        let mut groups_by_system: Vec<Vec<&dyn crate::system::SystemGroup>> = vec![Vec::new(); n];
+        for i in 0..n {
+            if let Some(mut group) = self.systems[i].parent() {
+                loop {
+                    let gid = group.as_any().type_id();
+                    systems_by_group.entry(gid).or_default().push(i);
+                    groups_by_system[i].push(group);
+                    if let Some(parent) = group.parent() {
+                        group = parent;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        // Enforce group Before/After constraints among systems
+        let mut constrained_edges: HashSet<(usize, usize)> = HashSet::new();
+        for i in 0..n {
+            for group in &groups_by_system[i] {
+                for before_type in group.before() {
+                    if let Some(targets) = systems_by_group.get(before_type) {
+                        for &j in targets {
+                            if i != j {
+                                graph.add_edge(i, j);
+                                constrained_edges.insert((i, j));
+                            }
+                        }
+                    }
+                }
+                for after_type in group.after() {
+                    if let Some(sources) = systems_by_group.get(after_type) {
+                        for &j in sources {
+                            if i != j {
+                                graph.add_edge(j, i);
+                                constrained_edges.insert((j, i));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now add writer->reader edges, but do not contradict group constraints
         for (t, writers) in writes_by_type.iter() {
             if let Some(readers) = reads_by_type.get(t) {
                 for &w in writers {
                     for &r in readers {
                         if w != r {
-                            graph.add_edge(w, r);
+                            // If group constraints require r -> w, skip w -> r
+                            if !constrained_edges.contains(&(r, w)) {
+                                graph.add_edge(w, r);
+                            }
                         }
                     }
                 }
             }
             if writers.len() > 1 {
                 for k in 0..writers.len() - 1 {
-                    graph.add_edge(writers[k], writers[k + 1]);
-                }
-            }
-        }
-
-        for i in 0..n {
-            if let Some(mut group) = self.systems[i].parent() {
-                loop {
-                    for before_type in group.before() {
-                        if let Some(bs) = index_by_type.get(before_type) {
-                            for &k in bs {
-                                if i != k {
-                                    graph.add_edge(i, k);
-                                }
-                            }
-                        }
-                    }
-                    for after_type in group.after() {
-                        if let Some(as_) = index_by_type.get(after_type) {
-                            for &k in as_ {
-                                if i != k {
-                                    graph.add_edge(k, i);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(parent) = group.parent() {
-                        group = parent;
-                    } else {
-                        break;
+                    let a = writers[k];
+                    let b = writers[k + 1];
+                    if !constrained_edges.contains(&(b, a)) {
+                        graph.add_edge(a, b);
                     }
                 }
             }
