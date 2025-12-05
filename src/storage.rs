@@ -571,29 +571,34 @@ impl<T: Component> Storage<T> {
         
         // Build unified storage-level changed_mask (OR of all rollback states > target_tick)
         let mut unified_storage_mask = 0u64;
+
         for rb in self.prev.iter() {
             if rb.tick() > target_tick {
                 unified_storage_mask |= rb.changed_mask;
             }
         }
+
         if self.rollback.tick() > target_tick {
             unified_storage_mask |= self.rollback.changed_mask;
         }
         
         // Iterate through each storage index that has changes
         let mut storage_mask = unified_storage_mask;
+
         while storage_mask != 0 {
             let storage_idx = storage_mask.trailing_zeros();
             storage_mask &= !(1u64 << storage_idx);
             
             // Build unified page-level changed_mask for this storage index
             let mut unified_page_mask = 0u64;
+
             for rb in self.prev.iter() {
                 if rb.tick() > target_tick
                     && let Some(rb_page) = rb.get_page(storage_idx) {
                         unified_page_mask |= rb_page.changed_mask;
                     }
             }
+
             if self.rollback.tick() > target_tick
                 && let Some(rb_page) = self.rollback.get_page(storage_idx) {
                     unified_page_mask |= rb_page.changed_mask;
@@ -601,6 +606,7 @@ impl<T: Component> Storage<T> {
             
             // Iterate through each page index that has changes
             let mut page_mask = unified_page_mask;
+
             while page_mask != 0 {
                 let page_idx = page_mask.trailing_zeros();
                 page_mask &= !(1u64 << page_idx);
@@ -618,6 +624,7 @@ impl<T: Component> Storage<T> {
                                 let unvisited = combined_mask & !visited_mask;
                                 
                                 let mut m = unvisited;
+                                
                                 while m != 0 {
                                     let chunk_idx = m.trailing_zeros();
                                     m &= !(1u64 << chunk_idx);
@@ -765,22 +772,7 @@ impl<T: Component> Storage<T> {
         self.recalculate_masks_and_cleanup();
         self.clear_changed_masks();
         
-        // Truncate rollback history: remove all states > target_tick
-        while !self.prev.is_empty() {
-            if let Some(back) = self.prev.back() {
-                if back.tick() > target_tick {
-                    if let Some(mut old_rb) = self.prev.pop_back() {
-                        // Return to pool for reuse
-                        old_rb.reset_for_tick(Tick(0));
-                        self.rollback_pool.push(old_rb);
-                    }
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
+        
     }
 
 
