@@ -165,7 +165,7 @@ impl<T: Component> Storage<T> {
 
             let chunk_ptr = (*page_ptr).data[page_idx as usize];
             let bit = 1u64 << chunk_idx;
-            
+
             if ((*chunk_ptr).presence_mask & bit) == 0 {
                 return None;
             }
@@ -191,7 +191,9 @@ impl<T: Component> Storage<T> {
                 rb_chunk.created_mask |= bit;
             } else {
                 if !was_changed && !was_removed {
-                    let old_val = (*chunk_ptr).data[chunk_idx as usize].assume_init_ref().clone();
+                    let old_val = (*chunk_ptr).data[chunk_idx as usize]
+                        .assume_init_ref()
+                        .clone();
                     rb_chunk.data[chunk_idx as usize].write(old_val);
                 }
                 rb_chunk.removed_mask &= !bit;

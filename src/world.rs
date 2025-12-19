@@ -61,8 +61,6 @@ impl World {
         let frame = Frame::new(self.current_tick());
         self.scheduler.run(&frame);
 
-        
-
         for seg in 0..4 {
             let base = seg * 64;
             let mut remaining_mask = self.storage_mask[seg];
