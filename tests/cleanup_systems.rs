@@ -34,6 +34,7 @@ system!(NoopSystem { query fn update(_pos: View<Position>) { let _ = _pos.x; } }
 #[test]
 fn component_cleanup_removes_t_when_destroyed_present() {
     register_components_once();
+    
     let mut world = World::new();
     {
         let f = Frame::new(world.current_tick());

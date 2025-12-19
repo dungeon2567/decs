@@ -45,6 +45,7 @@ pub type VecQueue<T> = VecDeque<T>;
 /// # Important
 /// The invariants and mask semantics are based on the original Storage<T> at the current tick,
 /// not on RollbackStorage itself. RollbackStorage is a diff/snapshot structure.
+#[repr(align(64))]
 pub struct RollbackStorage<T: Clone> {
     pub changed_mask: u64, // Set if any child has any change (creation, modification, or removal)
     pub tick: Tick,
@@ -455,6 +456,7 @@ impl<T: Clone> Drop for RollbackStorage<T> {
 /// # Mask Semantics
 ///
 /// changed_mask: Set if any child chunk has any change (creation, modification, or removal)
+#[repr(align(64))]
 pub struct RollbackPage<T> {
     pub changed_mask: u64, // Set if any child has any change (creation, modification, or removal)
     pub data: [MaybeUninit<Box<RollbackChunk<T>, &'static Bump>>; 64],
@@ -588,6 +590,7 @@ impl<T> Drop for RollbackPage<T> {
 /// # Mask Semantics
 ///
 /// See RollbackStorage documentation for details on created_mask, changed_mask, and removed_mask.
+#[repr(align(64))]
 pub struct RollbackChunk<T> {
     pub created_mask: u64,
     pub changed_mask: u64,

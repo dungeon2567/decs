@@ -245,9 +245,9 @@ impl DependencyGraph {
 
     // Linear topological sort is intentionally removed from public use; levels are used instead.
 
-    fn topological_levels(&mut self) -> Vec<Vec<usize>> {
+    fn topological_levels(self) -> Vec<Vec<usize>> {
         let mut levels: Vec<Vec<usize>> = Vec::new();
-        let mut in_degree = self.in_degree.clone();
+        let mut in_degree = self.in_degree;
         let mut queue: VecDeque<usize> = VecDeque::new();
         for (i, deg) in in_degree.iter().enumerate() {
             if *deg == 0 {

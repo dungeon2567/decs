@@ -140,11 +140,78 @@ impl<T: Component> Storage<T> {
         }
     }
 
+    /// Gets a mutable reference to a value at the given global index.
+    /// Returns None if the value doesn't exist.
+    #[inline(always)]
+    pub fn get_mut(&mut self, frame: &crate::frame::Frame, index: u32) -> Option<&mut T> {
+        // Validate index is within valid range
+        if index >= 64 * 64 * 64 {
+            return None;
+        }
+
+        let chunk_idx = index & 63;
+        let page_idx = (index >> 6) & 63;
+        let storage_idx = index >> 12;
+
+        if (self.presence_mask >> storage_idx) & 1 == 0 {
+            return None;
+        }
+
+        unsafe {
+            let page_ptr = self.data[storage_idx as usize];
+            if ((*page_ptr).presence_mask >> page_idx) & 1 == 0 {
+                return None;
+            }
+
+            let chunk_ptr = (*page_ptr).data[page_idx as usize];
+            let bit = 1u64 << chunk_idx;
+            
+            if ((*chunk_ptr).presence_mask & bit) == 0 {
+                return None;
+            }
+
+            self.ensure_rollback_tick(frame.current_tick);
+
+            // Mark changed at all levels
+            (*chunk_ptr).changed_mask |= bit;
+            (*page_ptr).changed_mask |= 1u64 << page_idx;
+            self.changed_mask |= 1u64 << storage_idx;
+
+            // Handle rollback
+            let rb_page = self.rollback.get_or_create_page(storage_idx);
+            let rb_chunk = rb_page.get_or_create_chunk(page_idx);
+
+            let was_created = (rb_chunk.created_mask & bit) != 0;
+            let was_changed = (rb_chunk.changed_mask & bit) != 0;
+            let was_removed = (rb_chunk.removed_mask & bit) != 0;
+
+            if was_created {
+                rb_chunk.removed_mask &= !bit;
+                rb_chunk.changed_mask &= !bit;
+                rb_chunk.created_mask |= bit;
+            } else {
+                if !was_changed && !was_removed {
+                    let old_val = (*chunk_ptr).data[chunk_idx as usize].assume_init_ref().clone();
+                    rb_chunk.data[chunk_idx as usize].write(old_val);
+                }
+                rb_chunk.removed_mask &= !bit;
+                rb_chunk.created_mask &= !bit;
+                rb_chunk.changed_mask |= bit;
+            }
+
+            rb_page.changed_mask |= 1u64 << page_idx;
+            self.rollback.changed_mask |= 1u64 << storage_idx;
+
+            Some((*chunk_ptr).data[chunk_idx as usize].assume_init_mut())
+        }
+    }
+
     /// Sets a value at the given global index.
+    #[inline(always)]
     pub fn set(&mut self, frame: &crate::frame::Frame, index: u32, value: T) {
-        let chunk_idx = index % 64;
-        let page_idx = (index / 64) % 64;
-        let storage_idx = index / (64 * 64);
+        let chunk_idx = index & 63;
+        let page_idx = (index >> 6) & 63;
+        let storage_idx = index >> 12;
 
         assert!(storage_idx < 64, "Storage index out of range");
 
@@ -342,10 +409,11 @@ impl<T: Component> Storage<T> {
 
     /// Removes a value at the given global index.
     /// Returns true if the value was removed, false if it didn't exist.
+    #[inline(always)]
     pub fn remove(&mut self, frame: &crate::frame::Frame, index: u32) -> bool {
-        let chunk_idx = index % 64;
-        let page_idx = (index / 64) % 64;
-        let storage_idx = index / (64 * 64);
+        let chunk_idx = index & 63;
+        let page_idx = (index >> 6) & 63;
+        let storage_idx = index >> 12;
 
         if storage_idx >= 64 {
             return false;

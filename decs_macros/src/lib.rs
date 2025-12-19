@@ -419,31 +419,40 @@ pub fn system(input: TokenStream) -> TokenStream {
             }
         })
         .collect();
-    let chunk_refs_init: Vec<_> = (0..required_count).map(|i| {
-        let is_mut = storage_fields[i].3;
-        let page_var = Ident::new(&format!("page_{}", i), system_name.span());
-        let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
-        if is_mut {
-            let storage_field = &storage_fields[i].0;
+    // Generate rollback initialization sequences (hoisted to top of run)
+    let rollback_inits: Vec<_> = storage_fields
+        .iter()
+        .filter(|(_, _, _, is_mut)| *is_mut)
+        .map(|(name, _ty, _mutability, _)| {
             quote! {
                 {
                     let ct = _frame.current_tick;
-                    if ((*self.#storage_field).rollback.tick() != ct) {
-                        let new_current = if let Some(mut pooled) = (*self.#storage_field).rollback_pool.pop() {
+                    if ((*self.#name).rollback.tick() != ct) {
+                        let new_current = if let Some(mut pooled) = (*self.#name).rollback_pool.pop() {
                             pooled.reset_for_tick(ct);
                             pooled
                         } else {
                             Box::new(decs::rollback::RollbackStorage::with_tick(ct))
                         };
-                        let old = std::mem::replace(&mut (*self.#storage_field).rollback, new_current);
-                        let mut merged = std::mem::take(&mut (*self.#storage_field).prev);
+                        let old = std::mem::replace(&mut (*self.#name).rollback, new_current);
+                        let mut merged = std::mem::take(&mut (*self.#name).prev);
                         merged.push_back(old);
-                        (*self.#storage_field).prev = merged;
-                        while (*self.#storage_field).prev.len() > 64 {
-                            (*self.#storage_field).prev.pop_front();
+                        (*self.#name).prev = merged;
+                        while (*self.#name).prev.len() > 64 {
+                            (*self.#name).prev.pop_front();
                         }
                     }
                 }
+            }
+        })
+        .collect();
+
+    let chunk_refs_init: Vec<_> = (0..required_count).map(|i| {
+        let is_mut = storage_fields[i].3;
+        let page_var = Ident::new(&format!("page_{}", i), system_name.span());
+        let chunk_var = Ident::new(&format!("chunk_{}", i), system_name.span());
+        if is_mut {
+            quote! {
                 let mut #chunk_var = &mut *(*#page_var).data[page_idx];
             }
         } else {
@@ -558,6 +567,7 @@ pub fn system(input: TokenStream) -> TokenStream {
         impl decs::system::System for #system_name {
             fn run(&self, _frame: &decs::frame::Frame) {
                 unsafe {
+                    #(#rollback_inits)*
                     let mut storage_mask = #mask_intersection & !#none_full_pages_or;
                     while storage_mask != 0 {
                         let storage_idx = storage_mask.trailing_zeros() as usize;
@@ -588,9 +598,9 @@ pub fn system(input: TokenStream) -> TokenStream {
                                 let chunk_item_idx = item_mask_iter.trailing_zeros() as usize;
                                 #(#param_gathering)*
                                 #system_name::#query_fn_name(#(#call_args),*);
-                                #(#propagate_changes)*
                                 item_mask_iter &= item_mask_iter - 1;
                             }
+                            #(#propagate_changes)*
 
                             page_mask_iter &= page_mask_iter - 1;
                         }

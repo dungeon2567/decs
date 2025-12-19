@@ -1,6 +1,7 @@
 use decs::ecs::Ecs;
 use decs::frame::Frame;
-use decs::system; // for `system!`
+use decs::system;
+// for `system!`
 use decs::view::{View, ViewMut};
 use decs::world::World;
 use decs_macros::Component;
@@ -157,7 +158,12 @@ fn count_storage_changed_position(world: &mut World) -> u32 {
     }
 }
 
-system!(MutPosOnVel { query fn update(pos: &mut ViewMut<Position>, _vel: View<Velocity>) { pos.x += 1.0; } });
+system!(MutPosOnVel { query
+    fn update(pos: &mut ViewMut<Position>, _vel: View<Velocity>)
+    {
+        pos.x += 1.0;
+    }
+});
 
 #[test]
 fn none_filter_counts_without_frozen() {

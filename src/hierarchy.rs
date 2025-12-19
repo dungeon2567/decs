@@ -66,42 +66,54 @@ impl System for UpdateHierarchySystem {
 
                                     // Detach from old parent and neighbors
                                     if let Some(old_parent) = v.parent.take() {
-                                        let mut old_p = parents
-                                            .get(old_parent.index())
-                                            .cloned()
-                                            .unwrap_or(Parent { first_child: Entity::none(), last_child: Entity::none() });
-
+                                        // We'll fetch old_p only if we need to modify it (head/tail changes)
+                                        // But we need to update neighbors first to avoid borrow conflicts?
+                                        // storage and parents are disjoint, so no conflict.
+                                        
                                         if let Some(prev) = v.prev_sibling {
-                                            if let Some(mut pv) = storage.get(prev.index()).cloned() {
+                                            if let Some(pv) = storage.get_mut(frame, prev.index()) {
                                                 pv.next_sibling = v.next_sibling;
-                                                storage.set(frame, prev.index(), pv);
                                             }
-                                        } else {
-                                            old_p.first_child = v.next_sibling.unwrap_or(Entity::none());
                                         }
 
-                                        if let Some(next) = v.next_sibling
-                                            && let Some(mut nv) = storage.get(next.index()).cloned()
-                                        {
-                                            nv.prev_sibling = v.prev_sibling;
-                                            storage.set(frame, next.index(), nv);
-                                        } else {
-                                            old_p.last_child = v.prev_sibling.unwrap_or(Entity::none());
+                                        if let Some(next) = v.next_sibling {
+                                            if let Some(nv) = storage.get_mut(frame, next.index()) {
+                                                nv.prev_sibling = v.prev_sibling;
+                                            }
                                         }
 
-                                        if old_p.first_child.is_none() {
-                                            old_p.last_child = Entity::none();
+                                        // Update old parent
+                                        // Logic:
+                                        // if prev_sibling is None, then I was first_child. Update first_child to next_sibling.
+                                        // if next_sibling is None, then I was last_child. Update last_child to prev_sibling.
+                                        
+                                        let update_head = v.prev_sibling.is_none();
+                                        let update_tail = v.next_sibling.is_none();
+
+                                        if update_head || update_tail {
+                                            if let Some(old_p) = parents.get_mut(frame, old_parent.index()) {
+                                                if update_head {
+                                                    old_p.first_child = v.next_sibling.unwrap_or(Entity::none());
+                                                }
+                                                if update_tail {
+                                                    old_p.last_child = v.prev_sibling.unwrap_or(Entity::none());
+                                                }
+                                                if old_p.first_child.is_none() {
+                                                    old_p.last_child = Entity::none();
+                                                }
+                                            } else {
+                                                // If it didn't exist, create default and update
+                                                let mut old_p = Parent { first_child: Entity::none(), last_child: Entity::none() };
+                                                if update_head {
+                                                    old_p.first_child = v.next_sibling.unwrap_or(Entity::none());
+                                                }
+                                                if update_tail {
+                                                    old_p.last_child = v.prev_sibling.unwrap_or(Entity::none());
+                                                }
+                                                parents.set(frame, old_parent.index(), old_p);
+                                            }
                                         }
-                                        parents.set(frame, old_parent.index(), old_p);
                                     }
-
-                                    // Prepare new parent head/tail
-                                    let (head, tail) = if let Some(pv) = parents.get(new_parent.index()) {
-                                        (pv.first_child, pv.last_child)
-                                    } else {
-                                        parents.set(frame, new_parent.index(), Parent { first_child: Entity::none(), last_child: Entity::none() });
-                                        (Entity::none(), Entity::none())
-                                    };
 
                                     v.parent = Some(new_parent);
 
@@ -110,20 +122,33 @@ impl System for UpdateHierarchySystem {
                                         .get(global_index)
                                         .copied()
                                         .unwrap_or_else(|| Entity::new(global_index, 0));
+                                    
+                                    // DEBUG
+                                    println!("Processing child: {:?}, new_parent: {:?}", me, new_parent);
+
+                                    // Create parent if missing
+                                    if parents.get(new_parent.index()).is_none() {
+                                        parents.set(frame, new_parent.index(), Parent { first_child: Entity::none(), last_child: Entity::none() });
+                                    }
 
                                     // Attach to tail (O(1))
-                                    if head.is_none() {
-                                        v.prev_sibling = None;
-                                        v.next_sibling = None;
-                                        parents.set(frame, new_parent.index(), Parent { first_child: me, last_child: me });
-                                    } else {
-                                        v.prev_sibling = Some(tail);
-                                        v.next_sibling = None;
-                                        if let Some(mut tv) = storage.get(tail.index()).cloned() {
-                                            tv.next_sibling = Some(me);
-                                            storage.set(frame, tail.index(), tv);
+                                    if let Some(pv) = parents.get_mut(frame, new_parent.index()) {
+                                        let head = pv.first_child;
+                                        let tail = pv.last_child;
+
+                                        if head.is_none() {
+                                            v.prev_sibling = None;
+                                            v.next_sibling = None;
+                                            pv.first_child = me;
+                                            pv.last_child = me;
+                                        } else {
+                                            v.prev_sibling = Some(tail);
+                                            v.next_sibling = None;
+                                            if let Some(tv) = storage.get_mut(frame, tail.index()) {
+                                                tv.next_sibling = Some(me);
+                                            }
+                                            pv.last_child = me;
                                         }
-                                        parents.set(frame, new_parent.index(), Parent { first_child: head, last_child: me });
                                     }
                                 }
                             }

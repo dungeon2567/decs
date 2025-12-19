@@ -121,18 +121,14 @@ If Page.count == 64*64, then Page.fullness_mask bit is set
 
 ### Structure
 
-- RollbackStorage<T>
-  - `changed_mask: u64` — any change in any child (creation, modification, or removal)
-  - `tick: Tick`
-  - `data: [MaybeUninit<Box<RollbackPage<T>>>; 64]`
-    - RollbackPage<T>
-      - `changed_mask: u64` — any change in any child (creation, modification, or removal)
-      - `data: [MaybeUninit<Box<RollbackChunk<T>>>; 64]`
-        - RollbackChunk<T>
-          - `created_mask: u64`
-          - `changed_mask: u64`
-          - `removed_mask: u64`
-          - `data: [MaybeUninit<T>; 64]`
+#[repr(align(64))]
+pub struct RollbackStorage<T: Clone> {
+    pub changed_mask: u64, // Set if any child has any change (creation, modification, or removal)
+    pub tick: Tick,
+    pub data: [MaybeUninit<Box<RollbackPage<T>, &'static Bump>>; 64],
+    pub generation_at_tick_start: u64, // Saved generation for rollback
+    pub arena_box: Box<Bump>,          // Bump allocator for pages/chunks
+}
 
 ### Mask Semantics
 
@@ -292,20 +288,49 @@ RollbackStorage tracks changes between **tick-1** and the **current tick**, base
 
 ---
 
+## Hierarchy System
+
+The hierarchy system provides parent-child relationship management through `Parent` and `ChildOf` components, maintained by `UpdateHierarchySystem`.
+
+### Components
+
+1.  **Parent**:
+    - `first_child: Entity` - Head of the child list
+    - `last_child: Entity` - Tail of the child list
+
+2.  **ChildOf**:
+    - `parent: Option<Entity>` - Current parent
+    - `next_sibling: Option<Entity>` - Next sibling in list
+    - `prev_sibling: Option<Entity>` - Previous sibling in list
+    - `pending_parent: Option<Entity>` - Used to request reparenting
+
+### UpdateHierarchySystem
+
+- **Responsibility**: Processes `ChildOf` components with a set `pending_parent`.
+- **Logic**:
+    1.  Detaches child from old parent (updating old parent's `first_child`/`last_child` and siblings' `next`/`prev` links).
+    2.  Attaches child to new parent (appending to tail, updating new parent's `last_child`).
+    3.  Updates `parent` field and clears `pending_parent`.
+- **Ordering**: Sibling order is maintained as a doubly-linked list. New children are appended to the end.
+
+---
+
 ## System Integration & View Semantics
 
 ### View and ViewMut Usage
 
 1. **Restricted Usage**: `View` and `ViewMut` wrappers are designed to be used **ONLY** within Systems. They should not be used directly for manual storage manipulation.
 2. **Scope**: These wrappers operate at the **Chunk level** (leaf nodes) for performance reasons.
-   - `ViewMut` updates `changed_mask` at the Chunk level and, on the first write for a chunk/page, also sets the Page and Storage `changed_mask` bits to ensure hierarchical change visibility.
+   - `ViewMut` updates `changed_mask` at the Chunk level.
+   - `ViewMut` handles **RollbackStorage** updates: it saves old values and updates the RollbackStorage hierarchy masks.
+   - `ViewMut` does **NOT** update the main Storage/Page level `changed_mask`. This is the responsibility of the System (or system execution macro).
    - `ViewMut` does not modify `presence_mask` or `fullness_mask`.
 
 ### System Responsibilities
 
-Because `ViewMut` does not propagate invariants up the hierarchy, the **System** (or the code driving the system iteration) bears the responsibility for maintaining invariants:
+Because `ViewMut` does not propagate `changed_mask` up the main Storage hierarchy, the **System** (or the code driving the system iteration) bears the responsibility for maintaining invariants:
 
-1. **Mask Propagation**: After a System finishes processing a chunk/page, it must ensure that `changed_mask` is correctly propagated to Page and Storage levels if any changes occurred.
+1. **Mask Propagation**: After a System finishes processing a chunk (or during processing), it must ensure that `changed_mask` is correctly propagated to Page and Storage levels of the main Storage if any changes occurred. The `system!` macro handles this automatically at the chunk level.
 2. **Invariant Maintenance**: The System must ensure that `fullness_mask` and `presence_mask` remain consistent if it performs operations that could affect them (though `ViewMut` typically only modifies data, not presence).
 3. **Batch Updates**: Systems should ideally process updates in batches and propagate masks once per Page or after the entire run, rather than per component, to minimize overhead.
 
@@ -344,19 +369,26 @@ Because `ViewMut` does not propagate invariants up the hierarchy, the **System**
 
 ### MaybeUninit Usage
 
-Both Storage and RollbackStorage use `MaybeUninit` arrays to avoid initializing all 128 entries. This requires careful handling:
+The system uses `MaybeUninit` to avoid unnecessary initialization:
+
+- **Storage/Page**: Use raw pointers (`*mut Page<T>`, `*mut Chunk<T>`) which are nullable/default-initialized.
+- **Chunk**: Uses `[MaybeUninit<T>; 64]` for component storage.
+- **RollbackStorage/RollbackPage**: Use `[MaybeUninit<Box<...>>; 64]` to avoid allocating empty branches.
+
+This requires careful handling:
 
 1. **Before accessing `data[i]`**:
-   - Check that the corresponding mask bit is set
-   - Use `assume_init_ref()` or `assume_init_mut()` only after verification
+   - Check that the corresponding mask bit is set.
+   - For `Storage`: Ensure pointer is not the default shared pointer.
+   - For `RollbackStorage`: Use `assume_init_ref()` or `assume_init_mut()` only after verification.
 
 2. **Before writing to `data[i]`**:
-   - Use `write()` for uninitialized slots
-   - Use `assume_init_drop()` then `write()` for initialized slots
+   - Use `write()` for uninitialized slots (Rollback/Chunk).
+   - Use `assume_init_drop()` then `write()` for initialized slots (Rollback/Chunk).
 
 3. **Before dropping**:
-   - Only drop slots where masks indicate initialized data
-   - For RollbackStorage: Only drop `changed_mask | removed_mask`, never `created_mask`
+   - Only drop slots where masks indicate initialized data.
+   - For RollbackStorage: Only drop `changed_mask | removed_mask`, never `created_mask`.
 
 ### Drop Order
 
