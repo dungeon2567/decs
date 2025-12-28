@@ -6,13 +6,14 @@ const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
 
 struct Chunk {
     data: *mut u8,
-    capacity: usize,
     layout: Layout,
     next: Option<Box<Chunk>>,
 }
 
 impl Chunk {
     fn new(size: usize) -> Option<Box<Self>> {
+        // Align chunk memory to 16 bytes.
+        // This gives us a known baseline, though we still calculate offsets dynamically.
         let layout = Layout::from_size_align(size, 16).ok()?;
         let data = unsafe { std::alloc::alloc(layout) };
         if data.is_null() {
@@ -20,7 +21,6 @@ impl Chunk {
         }
         Some(Box::new(Self {
             data,
-            capacity: size,
             layout,
             next: None,
         }))
@@ -54,12 +54,16 @@ impl Arena {
         // Exclusive access due to &mut self
         let current = self.current.get_mut();
         if let Some(chunk) = current {
-            // Drop all older chunks to reclaim memory, keep the current (latest/largest) one
-            chunk.next = None;
+            // Iteratively drop the rest of the chain to prevent stack overflow
+            let mut next = chunk.next.take();
+            while let Some(mut c) = next {
+                next = c.next.take();
+            }
             
             // Reset pointer to start of data
-            *self.ptr.get_mut() = chunk.data as usize;
-            // End remains the same (capacity of the chunk)
+            let ptr = chunk.data as usize;
+            *self.ptr.get_mut() = ptr;
+            *self.end.get_mut() = ptr + chunk.layout.size();
         }
     }
 
@@ -73,7 +77,7 @@ impl Arena {
             new_chunk.next = current_chunk.take();
             
             let ptr = new_chunk.data as usize;
-            let end = ptr + new_chunk.capacity;
+            let end = ptr + new_chunk.layout.size();
             
             *current_chunk = Some(new_chunk);
             *self.ptr.get() = ptr;
@@ -87,33 +91,47 @@ impl Arena {
 unsafe impl Allocator for Arena {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
-            let mut ptr = *self.ptr.get();
+            let ptr = *self.ptr.get();
             let end = *self.end.get();
             
-            // Align pointer
+            // Try to align within current chunk
             let align_offset = (ptr as *const u8).align_offset(layout.align());
-            if align_offset != usize::MAX {
+            
+            let fits = if align_offset != usize::MAX {
                 if let Some(aligned_ptr) = ptr.checked_add(align_offset) {
                     if let Some(new_ptr) = aligned_ptr.checked_add(layout.size()) {
-                        if new_ptr <= end {
-                            *self.ptr.get() = new_ptr;
-                            let ptr_non_null = NonNull::new_unchecked(aligned_ptr as *mut u8);
-                            return Ok(NonNull::slice_from_raw_parts(ptr_non_null, layout.size()));
-                        }
-                    }
-                }
+                        new_ptr <= end
+                    } else { false }
+                } else { false }
+            } else { false };
+
+            if fits {
+                let aligned_ptr = ptr + align_offset;
+                let new_ptr = aligned_ptr + layout.size();
+                *self.ptr.get() = new_ptr;
+                let ptr_non_null = NonNull::new_unchecked(aligned_ptr as *mut u8);
+                return Ok(NonNull::slice_from_raw_parts(ptr_non_null, layout.size()));
             }
 
-            // Need new chunk
-            self.alloc_chunk(layout.size().max(layout.align()))?;
+            // Need new chunk. 
+            // We must request enough space to cover the size AND potential alignment adjustment.
+            // Since we don't know the base address of the new chunk yet, we assume worst-case padding.
+            // Worst case padding is `layout.align() - 1`.
+            let required_size = layout.size().checked_add(layout.align()).ok_or(AllocError)?;
+            self.alloc_chunk(required_size)?;
             
             // Retry allocation in new chunk
             let ptr = *self.ptr.get();
-            // We know the new chunk is fresh, so just align
+            // The new chunk is fresh, so this should succeed
             let align_offset = (ptr as *const u8).align_offset(layout.align());
-             // Should always succeed in a fresh chunk large enough
             let aligned_ptr = ptr + align_offset;
             let new_ptr = aligned_ptr + layout.size();
+            
+            // Verify bounds (sanity check)
+            let end = *self.end.get();
+            if new_ptr > end {
+                return Err(AllocError);
+            }
             
             *self.ptr.get() = new_ptr;
             let ptr_non_null = NonNull::new_unchecked(aligned_ptr as *mut u8);
@@ -129,5 +147,15 @@ unsafe impl Allocator for Arena {
 impl Default for Arena {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Arena {
+    fn drop(&mut self) {
+        // Iteratively drop the chain to prevent stack overflow
+        let mut current = self.current.get_mut().take();
+        while let Some(mut chunk) = current {
+            current = chunk.next.take();
+        }
     }
 }
