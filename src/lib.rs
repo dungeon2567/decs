@@ -15,6 +15,7 @@ pub mod system;
 pub mod tick;
 pub mod view;
 pub mod world;
+pub mod arena;
 
 // Re-export macros
 pub use decs_macros::system;

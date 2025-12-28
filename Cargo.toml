@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 decs_macros = { path = "decs_macros" }
-bumpalo = { version = "3", features = ["allocator_api"] }
 
 
 [dev-dependencies]

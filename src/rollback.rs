@@ -1,11 +1,11 @@
 use crate::tick::Tick;
-use bumpalo::Bump;
+use crate::arena::Arena;
 use std::collections::VecDeque;
 use std::mem::MaybeUninit;
 // Debug-only allocation counters removed: single-threaded environment doesn't need atomics
 
-// Using &'static Bump for allocator_api in Box::new_in. We create a stable
-// arena reference by converting Box<Bump> into a raw pointer and then a
+// Using &'static Arena for allocator_api in Box::new_in. We create a stable
+// arena reference by converting Box<Arena> into a raw pointer and then a
 // 'static reference that remains valid until we reconstruct and drop the Box in Drop.
 
 pub type VecQueue<T> = VecDeque<T>;
@@ -49,19 +49,19 @@ pub type VecQueue<T> = VecDeque<T>;
 pub struct RollbackStorage<T: Clone> {
     pub changed_mask: u64, // Set if any child has any change (creation, modification, or removal)
     pub tick: Tick,
-    pub data: [MaybeUninit<Box<RollbackPage<T>, &'static Bump>>; 64],
+    pub data: [MaybeUninit<Box<RollbackPage<T>, &'static Arena>>; 64],
     pub generation_at_tick_start: u64,
-    pub arena_box: Box<Bump>,
+    pub arena_box: Box<Arena>,
 }
 
 impl<T: Clone> RollbackStorage<T> {
     #[inline]
-    fn arena(&self) -> &'static Bump {
-        unsafe { &*(self.arena_box.as_ref() as *const Bump) }
+    fn arena(&self) -> &'static Arena {
+        unsafe { &*(self.arena_box.as_ref() as *const Arena) }
     }
     /// Creates a new empty RollbackStorage instance.
     pub fn new() -> Self {
-        let arena_box = Box::new(Bump::new());
+        let arena_box = Box::new(Arena::new());
         Self {
             changed_mask: 0,
             tick: Tick(0),
@@ -94,7 +94,7 @@ impl<T: Clone> RollbackStorage<T> {
 
     /// Creates a new RollbackStorage instance with the given tick.
     pub fn with_tick(tick: Tick) -> Self {
-        let arena_box = Box::new(Bump::new());
+        let arena_box = Box::new(Arena::new());
         Self {
             changed_mask: 0,
             tick,
@@ -459,12 +459,12 @@ impl<T: Clone> Drop for RollbackStorage<T> {
 #[repr(align(64))]
 pub struct RollbackPage<T> {
     pub changed_mask: u64, // Set if any child has any change (creation, modification, or removal)
-    pub data: [MaybeUninit<Box<RollbackChunk<T>, &'static Bump>>; 64],
-    alloc: &'static Bump,
+    pub data: [MaybeUninit<Box<RollbackChunk<T>, &'static Arena>>; 64],
+    alloc: &'static Arena,
 }
 
 impl<T> RollbackPage<T> {
-    pub fn new_with_alloc(alloc: &'static Bump) -> Self {
+    pub fn new_with_alloc(alloc: &'static Arena) -> Self {
         Self {
             changed_mask: 0,
             data: unsafe { MaybeUninit::uninit().assume_init() },
