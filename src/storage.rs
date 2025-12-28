@@ -83,7 +83,7 @@ impl<T: Component> Storage<T> {
             prev: VecQueue::new(),
             rollback_pool: Vec::new(),
             data: [default_page_ptr as *mut Page<T>; 64],
-            generation: 0, // Start at 0, will increment to 1 on first spawn (only used for Entity)
+            generation: 1,
             default_chunk_ptr,
             default_page_ptr,
         }
@@ -339,8 +339,9 @@ impl<T: Component> Storage<T> {
             }
 
             // Update page masks (presence_mask already set if chunk_was_new)
-            if !chunk_was_new {
-                page.presence_mask |= 1u64 << page_idx;
+            // If !chunk_was_new, the bit is already set, so we don't need to do anything
+            if chunk_was_new {
+                // Already set above when creating chunk
             }
 
             // Use count to determine if page is full: all 64 chunks exist AND all are full
@@ -361,8 +362,9 @@ impl<T: Component> Storage<T> {
             let page_is_full = page.count == 64 * 64;
 
             // Update storage masks (presence_mask already set if page_was_new)
-            if !page_was_new {
-                self.presence_mask |= 1u64 << storage_idx;
+            // If !page_was_new, the bit is already set, so we don't need to do anything
+            if page_was_new {
+                // Already set above when creating page
             }
 
             if page_is_full {
@@ -475,9 +477,7 @@ impl<T: Component> Storage<T> {
         // Update page masks and counts after potential rollback rotation
         {
             let page = unsafe { &mut *self.data[storage_idx as usize] };
-            if chunk_has_present {
-                page.presence_mask |= 1u64 << page_idx;
-            } else {
+            if !chunk_has_present {
                 page.presence_mask &= !(1u64 << page_idx);
             }
             // After removing a value, the chunk cannot be full, so clear fullness_mask
@@ -495,9 +495,8 @@ impl<T: Component> Storage<T> {
                 let page = &mut *self.data[storage_idx as usize];
                 // Drop owned chunk and reset pointer to default
                 let chunk_ptr = page.data[page_idx as usize];
-                if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr) {
-                    drop(Box::from_raw(chunk_ptr));
-                }
+                // Mask indicates chunk exists, so it cannot be default
+                drop(Box::from_raw(chunk_ptr));
                 page.data[page_idx as usize] = self.default_chunk_ptr as *mut Chunk<T>;
                 debug_assert!(
                     page.fullness_mask & !page.presence_mask == 0,
@@ -510,21 +509,12 @@ impl<T: Component> Storage<T> {
         // Use presence_mask for optimal check: if presence_mask != 0, page has chunks
         let page_has_present = unsafe { (&*self.data[storage_idx as usize]).presence_mask != 0 };
 
-        // Use count to determine if page is full: page.count == 64*64 (all slots filled)
-        let page_is_full = unsafe { (&*self.data[storage_idx as usize]).count == 64 * 64 };
-
-        if page_has_present {
-            self.presence_mask |= 1u64 << storage_idx;
-        } else {
+        if !page_has_present {
             self.presence_mask &= !(1u64 << storage_idx);
         }
 
-        if page_is_full {
-            self.fullness_mask |= 1u64 << storage_idx;
-        } else {
-            self.fullness_mask &= !(1u64 << storage_idx);
-        }
-
+        // After removing a value, the page cannot be full (count decreased), so clear fullness_mask
+        self.fullness_mask &= !(1u64 << storage_idx);
         self.fullness_mask &= self.presence_mask;
         self.changed_mask |= 1u64 << storage_idx;
 
@@ -599,10 +589,9 @@ impl<T: Component> Storage<T> {
             // Page is empty - drop it and reset pointer to default
             // Note: self.presence_mask and self.fullness_mask were already updated above
             let page_ptr = self.data[storage_idx as usize];
-            if !std::ptr::eq(page_ptr, self.default_page_ptr) {
-                unsafe {
-                    drop(Box::from_raw(page_ptr));
-                }
+            // Mask indicates page exists, so it cannot be default
+            unsafe {
+                drop(Box::from_raw(page_ptr));
             }
             self.data[storage_idx as usize] = self.default_page_ptr as *mut Page<T>;
             debug_assert!(
@@ -739,11 +728,9 @@ impl<T: Component> Storage<T> {
                                             // drop chunk if it became empty
                                             if chunk.presence_mask == 0 {
                                                 let chunk_ptr = page.data[page_idx_usize];
-                                                if !std::ptr::eq(chunk_ptr, self.default_chunk_ptr)
-                                                {
-                                                    unsafe {
-                                                        drop(Box::from_raw(chunk_ptr));
-                                                    }
+                                                // Chunk became empty, drop it
+                                                unsafe {
+                                                    drop(Box::from_raw(chunk_ptr));
                                                 }
                                                 page.data[page_idx_usize] =
                                                     self.default_chunk_ptr as *mut Chunk<T>;
@@ -803,7 +790,7 @@ impl<T: Component> Storage<T> {
                 {
                     let storage_idx_usize = storage_idx as usize;
                     let page_ptr = self.data[storage_idx_usize];
-                    if !std::ptr::eq(page_ptr, self.default_page_ptr) {
+                    if (self.presence_mask >> storage_idx) & 1 != 0 {
                         let page = unsafe { &mut *page_ptr };
                         // keep invariant: page.fullness_mask subset of presence
                         page.fullness_mask &= page.presence_mask;
@@ -1182,10 +1169,9 @@ impl<T: Component> Drop for Storage<T> {
             let run_len = shifted.trailing_ones() as usize;
             for i in start..start + run_len {
                 let page_ptr = self.data[i];
-                if !std::ptr::eq(page_ptr, self.default_page_ptr) {
-                    unsafe {
-                        drop(Box::from_raw(page_ptr));
-                    }
+                // Mask indicates page exists, so it cannot be the default pointer
+                unsafe {
+                    drop(Box::from_raw(page_ptr));
                 }
             }
             mask &= !((u64::MAX >> (64 - run_len)) << start);

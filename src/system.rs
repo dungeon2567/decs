@@ -390,9 +390,7 @@ impl<T: Component, Group: SystemGroup> TemporaryComponentCleanupSystem<T, Group>
 
                     // Drop the page itself and reset pointer to default
                     debug_assert!((t_storage.presence_mask >> storage_idx) & 1 != 0);
-                    if !std::ptr::eq(t_storage.data[storage_idx], t_storage.default_page_ptr) {
-                        drop(Box::from_raw(t_storage.data[storage_idx]));
-                    }
+                    drop(Box::from_raw(t_storage.data[storage_idx]));
                     let dp = t_storage.default_page_ptr as *mut _;
                     t_storage.data[storage_idx] = dp;
 
